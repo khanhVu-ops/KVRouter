@@ -6,6 +6,10 @@
 import SwiftUI
 
 /// Middleware can mutate/redirect/deny a route (auth, feature flags, interstitial ads, …).
+///
+/// `@MainActor` because middleware runs as part of main-actor navigation
+/// operations; hop to a background task inside a method if you need heavy work.
+@MainActor
 public protocol KVRouteMiddleware {
     func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute?
     func willPop(from: KVAppRoute?, to: KVAppRoute?) async -> Bool

@@ -12,7 +12,7 @@
 
 import SwiftUI
 import Foundation
-import Combine
+import Observation
 
 // MARK: - ================================
 // MARK: App Router
@@ -47,19 +47,87 @@ import Combine
 /// - Note: `@MainActor`-isolated. Navigation operations run through a FIFO queue,
 ///   so two rapid calls (e.g. `push` twice) keep their order even when async
 ///   middleware takes different amounts of time for each route.
+///
+/// **Observation:** On iOS 17+ the router participates in the `Observation`
+/// framework exactly like an `@Observable` class — views that read `path`,
+/// `sheet`, or `fullCover` directly (e.g. via `@Environment(\.router)`) only
+/// re-render when the property they read actually changes. On iOS 16 it falls
+/// back to `ObservableObject`, so `@ObservedObject` / `@StateObject` keep working
+/// everywhere.
 @MainActor
 public final class KVAppRouter: ObservableObject {
 
-    // MARK: - Published State
+    // MARK: - Observation Backing
+
+    /// `ObservationRegistrar` on iOS 17+, `nil` on iOS 16.
+    /// Stored as `Any?` because the registrar type itself requires iOS 17.
+    private let _registrar: Any? = {
+        if #available(iOS 17.0, *) { return ObservationRegistrar() }
+        return nil
+    }()
+
+    /// Report a property read to the Observation system (iOS 17+, no-op on iOS 16).
+    private func trackAccess<Member>(_ keyPath: KeyPath<KVAppRouter, Member>) {
+        if #available(iOS 17.0, *) {
+            (_registrar as? ObservationRegistrar)?.access(self, keyPath: keyPath)
+        }
+    }
+
+    /// Run a mutation, notifying both observation systems:
+    /// `objectWillChange` for iOS 16 / `@ObservedObject` clients, and the
+    /// registrar for iOS 17+ Observation tracking.
+    private func withTrackedMutation<Member>(
+        _ keyPath: KeyPath<KVAppRouter, Member>,
+        _ mutation: () -> Void
+    ) {
+        objectWillChange.send()
+        if #available(iOS 17.0, *), let registrar = _registrar as? ObservationRegistrar {
+            registrar.withMutation(of: self, keyPath: keyPath, mutation)
+        } else {
+            mutation()
+        }
+    }
+
+    // MARK: - Navigation State
+
+    private var _path: [KVAppRoute] = []
+    private var _sheet: KVSheetRoute?
+    private var _fullCover: KVFullCoverRoute?
 
     /// Navigation stack path for push navigation.
-    @Published public var path: [KVAppRoute] = []
+    public var path: [KVAppRoute] {
+        get {
+            trackAccess(\.path)
+            return _path
+        }
+        set {
+            let oldValue = _path
+            withTrackedMutation(\.path) { _path = newValue }
+            handlePathChange(from: oldValue, to: newValue)
+        }
+    }
 
     /// Current sheet route (nil = no sheet presented).
-    @Published public var sheet: KVSheetRoute? = nil
+    public var sheet: KVSheetRoute? {
+        get {
+            trackAccess(\.sheet)
+            return _sheet
+        }
+        set {
+            withTrackedMutation(\.sheet) { _sheet = newValue }
+        }
+    }
 
     /// Current full screen cover route (nil = no cover presented).
-    @Published public var fullCover: KVFullCoverRoute? = nil
+    public var fullCover: KVFullCoverRoute? {
+        get {
+            trackAccess(\.fullCover)
+            return _fullCover
+        }
+        set {
+            withTrackedMutation(\.fullCover) { _fullCover = newValue }
+        }
+    }
 
     /// Middleware chain for route interception.
     private let middlewares: [KVRouteMiddleware]
@@ -98,7 +166,6 @@ public final class KVAppRouter: ObservableObject {
     /// - Parameter middlewares: Route middlewares (auth guards, loggers, interstitial ads, etc.)
     public init(middlewares: [KVRouteMiddleware] = []) {
         self.middlewares = middlewares
-        setupPathObserver()
     }
 
     // MARK: - Operation Queue
@@ -114,32 +181,11 @@ public final class KVAppRouter: ObservableObject {
 
     // MARK: - Path Change Observation
 
-    /// Previous path for detecting system-initiated pops
-    private var previousPath: [KVAppRoute] = []
-
-    /// Cancellables for Combine subscriptions
-    private var cancellables = Set<AnyCancellable>()
-
     /// Flag to distinguish router-controlled pops from system-initiated pops
     private var isRouterControlledPop = false
 
-    /// Setup observer for path changes to detect system-initiated pops
-    /// (swipe-back, @Environment(\.dismiss)) and run middleware as side-effects.
-    private func setupPathObserver() {
-        $path
-            .dropFirst() // Skip initial value
-            .sink { [weak self] newPath in
-                guard let self = self else { return }
-                // Path is only ever mutated on the main actor.
-                MainActor.assumeIsolated {
-                    self.handlePathChange(from: self.previousPath, to: newPath)
-                    self.previousPath = newPath
-                }
-            }
-            .store(in: &cancellables)
-    }
-
-    /// Handle system-initiated path changes and run middleware as side-effects.
+    /// Handle system-initiated path changes (swipe-back, @Environment(\.dismiss))
+    /// invoked directly from the `path` setter, and run middleware as side-effects.
     /// Note: System pops cannot be cancelled — middleware runs as post-pop callbacks.
     private func handlePathChange(from oldPath: [KVAppRoute], to newPath: [KVAppRoute]) {
         // Only trigger when popping (newPath is shorter)
@@ -170,6 +216,15 @@ public final class KVAppRouter: ObservableObject {
         }
     }
 }
+
+// MARK: - ================================
+// MARK: Observation Conformance (iOS 17+)
+// MARK: ================================
+
+/// On iOS 17+ the router is a first-class `Observable` — SwiftUI tracks
+/// per-property reads in view bodies, matching `@Observable` behavior.
+@available(iOS 17.0, *)
+extension KVAppRouter: Observable {}
 
 // MARK: - ================================
 // MARK: Push Navigation

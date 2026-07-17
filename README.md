@@ -1,10 +1,14 @@
 # KVRouter
 
-Clean, performant, and ergonomic router for SwiftUI — iOS 16+.
+Clean, performant, and ergonomic router for SwiftUI — iOS 16+, Swift 6.
 
 - ✅ Type-safe push navigation on top of `NavigationStack`
+- ✅ **Observation-ready**: on iOS 17+ the router behaves like an `@Observable`
+  class (fine-grained, per-property tracking); on iOS 16 it falls back to
+  `ObservableObject` — same API, checked at runtime with `#available`
 - ✅ `@MainActor`-isolated with a FIFO operation queue — rapid navigation calls
   keep their order even when async middleware takes varying time per route
+- ✅ Compiles in Swift 6 language mode (swift-tools 6.2, strict concurrency)
 - ✅ Dynamic views: `pushView { }`, `presentSheet { }`, `presentFullCover { }`
 - ✅ Sheet & full screen cover presentation — sheet → cover transitions wait for
   the actual dismissal to complete (no hardcoded animation delays)
@@ -12,6 +16,12 @@ Clean, performant, and ergonomic router for SwiftUI — iOS 16+.
 - ✅ Deep link handling via `onOpenURL`
 - ✅ Automatic cleanup of dynamic view builders (no leaks on swipe-back / swipe-down)
 - ✅ State restoration support via `restorePath(_:)`
+
+## Example App
+
+Open `KVRouterExample/KVRouterExample.xcodeproj` for a runnable demo covering
+typed routes, dynamic pushes, FIFO ordering, sheets, full covers, safe
+sheet → cover transitions, an auth-guard middleware, and deep links.
 
 ## Installation
 
@@ -133,10 +143,32 @@ let decoded = try JSONDecoder().decode([KVAppRoute].self, from: data)
 router.restorePath(decoded)
 ```
 
-## Threading
+## Observation (iOS 17+) vs ObservableObject (iOS 16)
 
-`KVAppRouter` is `@MainActor`. Call it from views and other main-actor code
-directly; from background code, hop first: `await MainActor.run { router.push(...) }`.
+`KVAppRouter` supports both observation systems at once, selected at runtime:
+
+- **iOS 17+** — the router conforms to `Observable` and reports property
+  access/mutation through an `ObservationRegistrar`, exactly like the
+  `@Observable` macro. Views that read `router.path` / `router.sheet` /
+  `router.fullCover` directly (e.g. via `@Environment(\.router)`) re-render
+  only when the property they actually read changes.
+- **iOS 16** — falls back to `ObservableObject` (`objectWillChange`), so
+  `@StateObject` / `@ObservedObject` keep working.
+
+No configuration needed — the check is `if #available(iOS 17.0, *)` inside.
+
+## Threading & Swift 6
+
+`KVAppRouter` is `@MainActor` and the package compiles in Swift 6 language
+mode. Call the router from views and other main-actor code directly; from
+background code, hop first: `await MainActor.run { router.push(...) }`.
+`KVRouteMiddleware` is `@MainActor` too — offload heavy work inside a
+middleware with a background `Task` if needed.
+
+## Requirements (package)
+
+- iOS 16.0+ (Observation fast path on iOS 17+)
+- Swift 6.2 toolchain (Xcode 26+) to build; Swift 6 language mode
 
 ## API Overview
 
@@ -147,11 +179,6 @@ directly; from background code, hop first: `await MainActor.run { router.push(..
 | Sheet | `present(_:)`, `presentSheet(_:)`, `dismissSheet()`, `dismissSheet(afterDismiss:)` |
 | Full cover | `presentFull(_:)`, `presentFullCover(_:)`, `dismissFull()`, `dismissSheetThenPresentFull(_:)` |
 | Deep link | `handle(url:)` |
-
-## Requirements
-
-- iOS 16.0+
-- Swift 5.9+
 
 ## License
 
