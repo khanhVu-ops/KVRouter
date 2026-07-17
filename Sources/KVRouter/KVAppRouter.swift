@@ -44,8 +44,10 @@ import Combine
 /// router.popToRoot()
 /// ```
 ///
-/// - Note: Not `@MainActor`-isolated so ``EnvironmentValues/router`` can supply a default without actor violations.
-///   Navigation and modal state mutations are scheduled with `Task { @MainActor in … }` so `@Published` updates stay on the main thread.
+/// - Note: `@MainActor`-isolated. Navigation operations run through a FIFO queue,
+///   so two rapid calls (e.g. `push` twice) keep their order even when async
+///   middleware takes different amounts of time for each route.
+@MainActor
 public final class KVAppRouter: ObservableObject {
 
     // MARK: - Published State
@@ -79,6 +81,17 @@ public final class KVAppRouter: ObservableObject {
     /// Registry for custom full cover views.
     private var customFullCoverBuilders: [UUID: () -> AnyView] = [:]
 
+    // MARK: - Serial Operation Queue
+
+    /// Tail of the FIFO operation chain. Each navigation operation awaits the
+    /// previous one before running, so async middleware cannot reorder two
+    /// operations issued back-to-back.
+    private var lastOperation: Task<Void, Never>?
+
+    /// Continuations waiting for the sheet dismissal animation to complete
+    /// (resumed by ``sheetDidDismiss()`` or a timeout fallback).
+    private var sheetDismissWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
     // MARK: - Initialization
 
     /// Creates a new router instance.
@@ -86,6 +99,17 @@ public final class KVAppRouter: ObservableObject {
     public init(middlewares: [KVRouteMiddleware] = []) {
         self.middlewares = middlewares
         setupPathObserver()
+    }
+
+    // MARK: - Operation Queue
+
+    /// Enqueue a navigation operation. Operations run strictly in FIFO order.
+    private func enqueue(_ operation: @escaping @MainActor () async -> Void) {
+        let previous = lastOperation
+        lastOperation = Task { @MainActor in
+            await previous?.value
+            await operation()
+        }
     }
 
     // MARK: - Path Change Observation
@@ -106,8 +130,11 @@ public final class KVAppRouter: ObservableObject {
             .dropFirst() // Skip initial value
             .sink { [weak self] newPath in
                 guard let self = self else { return }
-                self.handlePathChange(from: self.previousPath, to: newPath)
-                self.previousPath = newPath
+                // Path is only ever mutated on the main actor.
+                MainActor.assumeIsolated {
+                    self.handlePathChange(from: self.previousPath, to: newPath)
+                    self.previousPath = newPath
+                }
             }
             .store(in: &cancellables)
     }
@@ -153,9 +180,10 @@ extension KVAppRouter {
     /// Push a typed route onto the navigation stack.
     /// - Parameter route: The route to navigate to.
     public func push(_ route: KVAppRoute) {
-        Task { @MainActor in
-            guard let finalRoute = await applyMiddlewares(to: route) else { return }
-            path.append(finalRoute)
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
+            self.path.append(finalRoute)
         }
     }
 
@@ -165,13 +193,14 @@ extension KVAppRouter {
     /// - Parameter build: Closure that builds the view.
     public func pushView<V: View>(_ build: @escaping () -> V) {
         let id = UUID()
-        Task { @MainActor in
-            customBuilders[id] = { AnyView(build()) }
-            guard let finalRoute = await applyMiddlewares(to: .customView(id)) else {
-                customBuilders[id] = nil
+        enqueue { [weak self] in
+            guard let self else { return }
+            self.customBuilders[id] = { AnyView(build()) }
+            guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
+                self.customBuilders[id] = nil
                 return
             }
-            path.append(finalRoute)
+            self.path.append(finalRoute)
         }
     }
 
@@ -186,16 +215,17 @@ extension KVAppRouter {
     /// Replace the top route with a new route.
     /// - Parameter route: The route to replace with.
     public func replaceTop(with route: KVAppRoute) {
-        Task { @MainActor in
-            guard let finalRoute = await applyMiddlewares(to: route) else { return }
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
             // Clean up only after middleware approves, so a cancelled
             // navigation doesn't strand the current top view without its builder.
-            cleanupTopBuilderIfNeeded()
+            self.cleanupTopBuilderIfNeeded()
 
-            if path.isEmpty {
-                path = [finalRoute]
+            if self.path.isEmpty {
+                self.path = [finalRoute]
             } else {
-                path[path.count - 1] = finalRoute
+                self.path[self.path.count - 1] = finalRoute
             }
         }
     }
@@ -204,18 +234,19 @@ extension KVAppRouter {
     /// - Parameter build: Closure that builds the view.
     public func replaceTopWithView<V: View>(_ build: @escaping () -> V) {
         let id = UUID()
-        Task { @MainActor in
-            customBuilders[id] = { AnyView(build()) }
-            guard let finalRoute = await applyMiddlewares(to: .customView(id)) else {
-                customBuilders[id] = nil
+        enqueue { [weak self] in
+            guard let self else { return }
+            self.customBuilders[id] = { AnyView(build()) }
+            guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
+                self.customBuilders[id] = nil
                 return
             }
             // Clean up only after middleware approves (see `replaceTop(with:)`).
-            cleanupTopBuilderIfNeeded()
-            if path.isEmpty {
-                path = [finalRoute]
+            self.cleanupTopBuilderIfNeeded()
+            if self.path.isEmpty {
+                self.path = [finalRoute]
             } else {
-                path[path.count - 1] = finalRoute
+                self.path[self.path.count - 1] = finalRoute
             }
         }
     }
@@ -225,16 +256,27 @@ extension KVAppRouter {
     /// Applies middlewares to each route and cleans up orphaned builders.
     /// - Parameter routes: The new path.
     public func setPath(_ routes: [KVAppRoute]) {
-        Task { @MainActor in
+        enqueue { [weak self] in
+            guard let self else { return }
             var transformed: [KVAppRoute] = []
             for route in routes {
-                if let finalRoute = await applyMiddlewares(to: route) {
+                if let finalRoute = await self.applyMiddlewares(to: route) {
                     transformed.append(finalRoute)
                 }
             }
-            cleanupOrphanedBuilders(newPath: transformed)
-            path = transformed
+            self.cleanupOrphanedBuilders(newPath: transformed)
+            self.path = transformed
         }
+    }
+
+    /// Restore a persisted path (state restoration).
+    ///
+    /// Routes that cannot be rebuilt after decoding are dropped —
+    /// `.customView` stores its view builder in memory only, so a decoded
+    /// `.customView` would render ``EmptyView``. See ``KVAppRoute/isRestorable``.
+    /// - Parameter routes: The decoded path to restore.
+    public func restorePath(_ routes: [KVAppRoute]) {
+        setPath(routes.filter(\.isRestorable))
     }
 }
 
@@ -247,27 +289,29 @@ extension KVAppRouter {
     /// Pop the top view from the navigation stack.
     /// Middleware can cancel this operation by returning `false`.
     public func pop() {
-        Task { @MainActor in
-            guard !path.isEmpty else { return }
-            let from = path.last
-            let to = path.count >= 2 ? path[path.count - 2] : nil
-            guard await applyPopMiddlewares(from: from, to: to) else { return }
-            isRouterControlledPop = true
-            let last = path.removeLast()
-            cleanupBuilder(for: last)
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard !self.path.isEmpty else { return }
+            let from = self.path.last
+            let to = self.path.count >= 2 ? self.path[self.path.count - 2] : nil
+            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
+            self.isRouterControlledPop = true
+            let last = self.path.removeLast()
+            self.cleanupBuilder(for: last)
         }
     }
 
     /// Pop to the root of the navigation stack.
     /// Middleware runs for the top route being popped.
     public func popToRoot() {
-        Task { @MainActor in
-            guard !path.isEmpty else { return }
-            let from = path.last
-            guard await applyPopMiddlewares(from: from, to: nil) else { return }
-            isRouterControlledPop = true
-            path.forEach { cleanupBuilder(for: $0) }
-            path.removeAll(keepingCapacity: true)
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard !self.path.isEmpty else { return }
+            let from = self.path.last
+            guard await self.applyPopMiddlewares(from: from, to: nil) else { return }
+            self.isRouterControlledPop = true
+            self.path.forEach { self.cleanupBuilder(for: $0) }
+            self.path.removeAll(keepingCapacity: true)
         }
     }
 
@@ -277,13 +321,14 @@ extension KVAppRouter {
     /// Middleware runs for the top route being popped.
     /// - Parameter route: The route to pop to.
     public func popTo(_ route: KVAppRoute) {
-        Task { @MainActor in
-            guard let index = path.firstIndex(of: route) else { return }
-            let from = path.last
-            guard await applyPopMiddlewares(from: from, to: route) else { return }
-            isRouterControlledPop = true
-            cleanupBuilders(from: index + 1)
-            path = Array(path.prefix(through: index))
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let index = self.path.firstIndex(of: route) else { return }
+            let from = self.path.last
+            guard await self.applyPopMiddlewares(from: from, to: route) else { return }
+            self.isRouterControlledPop = true
+            self.cleanupBuilders(from: index + 1)
+            self.path = Array(self.path.prefix(through: index))
         }
     }
 
@@ -291,14 +336,15 @@ extension KVAppRouter {
     /// Middleware runs for the top route being popped.
     /// - Parameter predicate: Condition to match the route.
     public func popTo(where predicate: @escaping (KVAppRoute) -> Bool) {
-        Task { @MainActor in
-            guard let index = path.lastIndex(where: predicate) else { return }
-            let from = path.last
-            let to = path[index]
-            guard await applyPopMiddlewares(from: from, to: to) else { return }
-            isRouterControlledPop = true
-            cleanupBuilders(from: index + 1)
-            path = Array(path.prefix(through: index))
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let index = self.path.lastIndex(where: predicate) else { return }
+            let from = self.path.last
+            let to = self.path[index]
+            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
+            self.isRouterControlledPop = true
+            self.cleanupBuilders(from: index + 1)
+            self.path = Array(self.path.prefix(through: index))
         }
     }
 
@@ -306,17 +352,18 @@ extension KVAppRouter {
     /// Middleware runs once for the top route being popped.
     /// - Parameter count: Number of views to pop.
     public func pop(count: Int) {
-        Task { @MainActor in
-            let removeCount = min(count, path.count)
+        enqueue { [weak self] in
+            guard let self else { return }
+            let removeCount = min(count, self.path.count)
             guard removeCount > 0 else { return }
-            let from = path.last
-            let targetIndex = path.count - removeCount
-            let to: KVAppRoute? = targetIndex > 0 ? path[targetIndex - 1] : nil
-            guard await applyPopMiddlewares(from: from, to: to) else { return }
-            isRouterControlledPop = true
+            let from = self.path.last
+            let targetIndex = self.path.count - removeCount
+            let to: KVAppRoute? = targetIndex > 0 ? self.path[targetIndex - 1] : nil
+            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
+            self.isRouterControlledPop = true
             for _ in 0..<removeCount {
-                guard let last = path.popLast() else { break }
-                cleanupBuilder(for: last)
+                guard let last = self.path.popLast() else { break }
+                self.cleanupBuilder(for: last)
             }
         }
     }
@@ -331,8 +378,8 @@ extension KVAppRouter {
     /// Present a typed sheet route.
     /// - Parameter sheet: The sheet route to present.
     public func present(_ sheet: KVSheetRoute) {
-        Task { @MainActor in
-            self.sheet = sheet
+        enqueue { [weak self] in
+            self?.sheet = sheet
         }
     }
 
@@ -340,9 +387,10 @@ extension KVAppRouter {
     /// - Parameter build: Closure that builds the sheet content.
     public func presentSheet<V: View>(_ build: @escaping () -> V) {
         let id = UUID()
-        Task { @MainActor in
-            customSheetBuilders[id] = { AnyView(build()) }
-            sheet = .customSheet(id)
+        enqueue { [weak self] in
+            guard let self else { return }
+            self.customSheetBuilders[id] = { AnyView(build()) }
+            self.sheet = .customSheet(id)
         }
     }
 
@@ -356,10 +404,11 @@ extension KVAppRouter {
     /// Middleware can cancel this operation by returning `false`.
     /// Builder cleanup happens after the dismissal animation completes (see ``sheetDidDismiss()``).
     public func dismissSheet() {
-        Task { @MainActor in
-            guard let current = sheet else { return }
-            guard await applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
-            sheet = nil
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let current = self.sheet else { return }
+            guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
+            self.sheet = nil
         }
     }
 
@@ -368,10 +417,11 @@ extension KVAppRouter {
     /// the callback only runs when the dismissal actually happens.
     /// - Parameter action: Callback to execute after dismissal.
     public func dismissSheet(afterDismiss action: @escaping () -> Void) {
-        Task { @MainActor in
-            guard let current = sheet else { return }
-            guard await applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
-            sheet = nil
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let current = self.sheet else { return }
+            guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
+            self.sheet = nil
             action()
         }
     }
@@ -386,25 +436,27 @@ extension KVAppRouter {
     /// Present a typed full screen cover route.
     /// - Parameter cover: The cover route to present.
     public func presentFull(_ cover: KVFullCoverRoute) {
-        Task { @MainActor in
-            self.fullCover = cover
+        enqueue { [weak self] in
+            self?.fullCover = cover
         }
     }
 
     /// Present a dynamically built view as a full screen cover.
     ///
-    /// If a sheet is currently presented, it will be dismissed first.
+    /// If a sheet is currently presented, it is dismissed first and the cover
+    /// is presented once the dismissal animation actually completes (signalled
+    /// by ``KVRouterHost``), with a short timeout fallback when no host is attached.
     /// - Parameter build: Closure that builds the cover content.
     public func presentFullCover<V: View>(_ build: @escaping () -> V) {
-        Task { @MainActor in
-            if sheet != nil {
-                sheet = nil
-                // Delay to allow sheet dismissal animation
-                try? await Task.sleep(nanoseconds: 350_000_000) // 0.35s
+        enqueue { [weak self] in
+            guard let self else { return }
+            if self.sheet != nil {
+                self.sheet = nil
+                await self.awaitSheetDismissal()
             }
             let id = UUID()
-            customFullCoverBuilders[id] = { AnyView(build()) }
-            fullCover = .customFullCover(id)
+            self.customFullCoverBuilders[id] = { AnyView(build()) }
+            self.fullCover = .customFullCover(id)
         }
     }
 
@@ -418,22 +470,29 @@ extension KVAppRouter {
     /// Middleware can cancel this operation by returning `false`.
     /// Builder cleanup happens after the dismissal animation completes (see ``fullCoverDidDismiss()``).
     public func dismissFull() {
-        Task { @MainActor in
-            guard let current = fullCover else { return }
-            guard await applyDismissMiddlewares(sheet: nil, fullCover: current) else { return }
-            fullCover = nil
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let current = self.fullCover else { return }
+            guard await self.applyDismissMiddlewares(sheet: nil, fullCover: current) else { return }
+            self.fullCover = nil
         }
     }
 
     /// Dismiss sheet and then present a full screen cover.
     ///
-    /// Ensures safe transition between modal types.
+    /// Waits for the sheet dismissal to complete before presenting,
+    /// ensuring a safe transition between modal types.
+    /// Middleware can cancel the sheet dismissal by returning `false`.
     /// - Parameter cover: The cover route to present.
     public func dismissSheetThenPresentFull(_ cover: KVFullCoverRoute) {
-        dismissSheet { [weak self] in
-            Task { @MainActor in
-                self?.presentFull(cover)
+        enqueue { [weak self] in
+            guard let self else { return }
+            if let current = self.sheet {
+                guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
+                self.sheet = nil
+                await self.awaitSheetDismissal()
             }
+            self.fullCover = cover
         }
     }
 }
@@ -515,11 +574,16 @@ extension KVAppRouter {
 
     /// Called by ``KVRouterHost`` after a sheet dismissal animation completes
     /// (programmatic or swipe-down). Drops every custom sheet builder except the
-    /// one backing a sheet that is currently presented (sheet-replace case).
+    /// one backing a sheet that is currently presented (sheet-replace case),
+    /// and resumes any operation waiting on the dismissal (sheet → cover transitions).
     func sheetDidDismiss() {
         var activeID: UUID?
         if case let .customSheet(id)? = sheet { activeID = id }
         customSheetBuilders = customSheetBuilders.filter { $0.key == activeID }
+
+        let waiters = sheetDismissWaiters
+        sheetDismissWaiters = [:]
+        waiters.values.forEach { $0.resume() }
     }
 
     /// Called by ``KVRouterHost`` after a full screen cover dismissal completes.
@@ -528,6 +592,30 @@ extension KVAppRouter {
         var activeID: UUID?
         if case let .customFullCover(id)? = fullCover { activeID = id }
         customFullCoverBuilders = customFullCoverBuilders.filter { $0.key == activeID }
+    }
+
+    /// Suspend until the sheet dismissal animation completes.
+    ///
+    /// Resumed by ``sheetDidDismiss()`` when a ``KVRouterHost`` is attached; a
+    /// timeout fallback covers routers used without a host so the operation
+    /// queue can never stall.
+    private func awaitSheetDismissal(timeout: UInt64 = 700_000_000) async {
+        let waiterID = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            sheetDismissWaiters[waiterID] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeout)
+                self?.resumeSheetDismissWaiter(id: waiterID)
+            }
+        }
+    }
+
+    /// Resume a single waiter (timeout path). Safe against double-resume:
+    /// the waiter is removed from the registry before resuming.
+    private func resumeSheetDismissWaiter(id: UUID) {
+        if let continuation = sheetDismissWaiters.removeValue(forKey: id) {
+            continuation.resume()
+        }
     }
 }
 

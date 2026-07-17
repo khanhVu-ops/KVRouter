@@ -12,8 +12,14 @@ import SwiftUI
 // MARK: ================================
 
 /// Environment key for accessing the router.
+///
+/// `KVAppRouter` is `@MainActor` while `defaultValue` is nonisolated;
+/// SwiftUI only reads environment values on the main thread, so assuming
+/// main-actor isolation here is safe.
 private struct KVAppRouterKey: EnvironmentKey {
-    static let defaultValue: KVAppRouter = KVAppRouter(middlewares: [])
+    static let defaultValue: KVAppRouter = MainActor.assumeIsolated {
+        KVAppRouter(middlewares: [])
+    }
 }
 
 /// Environment value extension for router access.

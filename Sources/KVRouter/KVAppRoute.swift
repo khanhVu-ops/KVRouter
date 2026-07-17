@@ -36,6 +36,17 @@ public enum KVAppRoute: Hashable, Codable {
     case appFeature(String)
     /// Opaque path fragment (e.g. from URL) — map in ``KVAppRouter/deepLinkViewBuilder``.
     case deepLink(String)
+
+    /// Whether this route survives persistence / state restoration.
+    ///
+    /// `.customView` stores its view builder in memory only — a decoded
+    /// `.customView` has no builder and would render ``EmptyView``.
+    /// Use ``KVAppRouter/restorePath(_:)`` when restoring a persisted path;
+    /// it drops non-restorable routes automatically.
+    public var isRestorable: Bool {
+        if case .customView = self { return false }
+        return true
+    }
 }
 
 // MARK: - ================================

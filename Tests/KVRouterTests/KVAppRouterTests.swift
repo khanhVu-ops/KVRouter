@@ -84,6 +84,34 @@ final class KVAppRouterTests: XCTestCase {
         XCTAssertEqual(router.path, [.appFeature("b")])
     }
 
+    func testRestorePathDropsCustomViewRoutes() async {
+        let router = KVAppRouter()
+        router.restorePath([.appFeature("a"), .customView(UUID()), .appFeature("b")])
+        await waitUntil { router.path.count == 2 }
+        XCTAssertEqual(router.path, [.appFeature("a"), .appFeature("b")])
+    }
+
+    // MARK: - Operation Ordering
+
+    /// Middleware that is slow only for the first route — without the FIFO
+    /// operation queue, the second push would land before the first.
+    private struct SlowFirstMiddleware: KVRouteMiddleware {
+        func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? {
+            if to == .appFeature("slow") {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+            return to
+        }
+    }
+
+    func testConsecutivePushesKeepOrderWithAsyncMiddleware() async {
+        let router = KVAppRouter(middlewares: [SlowFirstMiddleware()])
+        router.push(.appFeature("slow"))
+        router.push(.appFeature("fast"))
+        await waitUntil { router.path.count == 2 }
+        XCTAssertEqual(router.path, [.appFeature("slow"), .appFeature("fast")])
+    }
+
     // MARK: - Middleware
 
     private struct RedirectMiddleware: KVRouteMiddleware {

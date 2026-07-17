@@ -82,14 +82,14 @@ public struct KVRouterHost<Root: View>: View {
     }
 
     /// System-initiated dismissals (swipe down) set the binding to nil.
-    /// Deferred to the next run loop to avoid mutating state during a view update;
-    /// builder cleanup happens in `onDismiss` after the animation completes.
+    /// Deferred to the next main-actor turn to avoid mutating state during a
+    /// view update; builder cleanup happens in `onDismiss` after the animation completes.
     private var sheetBinding: Binding<KVSheetRoute?> {
         Binding(
             get: { router.sheet },
             set: { newValue in
                 if newValue == nil {
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         router.sheet = nil
                     }
                 } else {
@@ -104,7 +104,7 @@ public struct KVRouterHost<Root: View>: View {
             get: { router.fullCover },
             set: { newValue in
                 if newValue == nil {
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         router.fullCover = nil
                     }
                 } else {
@@ -152,7 +152,9 @@ private struct KVRouterFullCoverContent: View {
 // MARK: Conditional View Modifier
 // MARK: ================================
 
-public extension View {
+// Internal on purpose: exposing a generic `View.if` publicly risks colliding
+// with an identically named helper in the host app.
+extension View {
     /// Apply a modifier conditionally.
     @ViewBuilder
     func `if`<Transform: View>(

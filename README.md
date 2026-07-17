@@ -3,11 +3,15 @@
 Clean, performant, and ergonomic router for SwiftUI — iOS 16+.
 
 - ✅ Type-safe push navigation on top of `NavigationStack`
+- ✅ `@MainActor`-isolated with a FIFO operation queue — rapid navigation calls
+  keep their order even when async middleware takes varying time per route
 - ✅ Dynamic views: `pushView { }`, `presentSheet { }`, `presentFullCover { }`
-- ✅ Sheet & full screen cover presentation, with safe sheet → cover transitions
+- ✅ Sheet & full screen cover presentation — sheet → cover transitions wait for
+  the actual dismissal to complete (no hardcoded animation delays)
 - ✅ Async middleware chain (auth guards, logging, redirects, interstitial ads, …)
 - ✅ Deep link handling via `onOpenURL`
 - ✅ Automatic cleanup of dynamic view builders (no leaks on swipe-back / swipe-down)
+- ✅ State restoration support via `restorePath(_:)`
 
 ## Installation
 
@@ -117,6 +121,22 @@ router.deepLinkViewBuilder = { payload in
 
 URLs arriving via `onOpenURL` are handled automatically by `KVRouterHost`.
 Unknown payloads are ignored — no navigation happens.
+
+## State Restoration
+
+`KVAppRoute` is `Codable`, so the path can be persisted. When restoring, use
+`restorePath(_:)` instead of `setPath(_:)` — it drops `.customView` routes,
+whose view builders live in memory only and cannot be re-created from disk:
+
+```swift
+let decoded = try JSONDecoder().decode([KVAppRoute].self, from: data)
+router.restorePath(decoded)
+```
+
+## Threading
+
+`KVAppRouter` is `@MainActor`. Call it from views and other main-actor code
+directly; from background code, hop first: `await MainActor.run { router.push(...) }`.
 
 ## API Overview
 
