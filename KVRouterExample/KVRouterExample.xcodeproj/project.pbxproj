@@ -321,20 +321,6 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		3368D45E300AE49200E6FB6E /* XCLocalSwiftPackageReference ".." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ..;
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		3368D45F300AE49200E6FB6E /* KVRouter */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = KVRouter;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCConfigurationList section */
 		3368D446300AE49000E6FB6E /* Build configuration list for PBXProject "KVRouterExample" */ = {
 			isa = XCConfigurationList;
@@ -355,6 +341,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		3368D45E300AE49200E6FB6E /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3368D45F300AE49200E6FB6E /* KVRouter */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KVRouter;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3368D443300AE49000E6FB6E /* Project object */;
 }

@@ -10,6 +10,8 @@ Clean, performant, and ergonomic router for SwiftUI — iOS 16+, Swift 6.
   keep their order even when async middleware takes varying time per route
 - ✅ Compiles in Swift 6 language mode (swift-tools 6.2, strict concurrency)
 - ✅ Dynamic views: `pushView { }`, `presentSheet { }`, `presentFullCover { }`
+- ✅ Pop back to a **specific screen**: `popTo(tag:)`, `popTo(DetailView.self)`,
+  `popTo(.appFeature("profile"))`, `popTo(where:)`
 - ✅ Sheet & full screen cover presentation — sheet → cover transitions wait for
   the actual dismissal to complete (no hardcoded animation delays)
 - ✅ Async middleware chain (auth guards, logging, redirects, interstitial ads, …)
@@ -132,6 +134,43 @@ router.deepLinkViewBuilder = { payload in
 URLs arriving via `onOpenURL` are handled automatically by `KVRouterHost`.
 Unknown payloads are ignored — no navigation happens.
 
+## Pop to a Specific Screen
+
+Typed routes can be targeted directly:
+
+```swift
+router.popTo(.appFeature("profile"))
+router.popTo(where: { route in /* custom condition */ })
+```
+
+Dynamic views (`pushView { }`) have an opaque `.customView(UUID)` route, so
+KVRouter offers two ways to target them:
+
+**By tag** — name the screen when pushing:
+
+```swift
+router.pushView(tag: "checkout") { CheckoutView(cart: cart) }
+// … several screens later:
+router.popTo(tag: "checkout")
+// Also matches typed routes: popTo(tag: "profile") finds .appFeature("profile")
+```
+
+**By view type** — zero configuration, the router records the concrete type at
+push time:
+
+```swift
+router.pushView { DetailView(id: 1) }
+router.pushView { SettingsView() }
+router.pushView { DetailView(id: 2) }
+
+router.popTo(DetailView.self) // → DetailView(id: 2), the nearest one
+```
+
+Both search from the top down and **exclude the current screen** — calling
+`popTo(DetailView.self)` from a `DetailView` pops back to the *previous*
+`DetailView` instance. If nothing below matches, nothing happens. `willPop`
+middleware runs and can cancel, like every other pop.
+
 ## State Restoration
 
 `KVAppRoute` is `Codable`, so the path can be persisted. When restoring, use
@@ -174,8 +213,8 @@ middleware with a background `Task` if needed.
 
 | Operation | Methods |
 |---|---|
-| Push | `push(_:)`, `pushView(_:)`, `replaceTop(with:)`, `replaceTopWithView(_:)`, `setPath(_:)` |
-| Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(where:)`, `popToRoot()` |
+| Push | `push(_:)`, `pushView(tag:_:)`, `replaceTop(with:)`, `replaceTopWithView(tag:_:)`, `setPath(_:)` |
+| Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popTo(where:)`, `popToRoot()` |
 | Sheet | `present(_:)`, `presentSheet(_:)`, `dismissSheet()`, `dismissSheet(afterDismiss:)` |
 | Full cover | `presentFull(_:)`, `presentFullCover(_:)`, `dismissFull()`, `dismissSheetThenPresentFull(_:)` |
 | Deep link | `handle(url:)` |

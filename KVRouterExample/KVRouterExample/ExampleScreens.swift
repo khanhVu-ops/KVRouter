@@ -39,6 +39,20 @@ struct DetailView: View {
                 Button("Pop 2") { router.pop(count: 2) }
                 Button("Pop to root") { router.popToRoot() }
             }
+
+            Section("Pop to a specific screen") {
+                Button("Pop to tag \"first-detail\"") {
+                    router.popTo(tag: "first-detail")
+                }
+                Button("Pop to nearest DetailView (by type)") {
+                    // Pops to the DetailView closest to the top, other than
+                    // screens above it — no tag needed.
+                    router.popTo(DetailView.self)
+                }
+                Button("Pop to .appFeature(\"profile\")") {
+                    router.popTo(.appFeature("profile"))
+                }
+            }
         }
         .navigationTitle("Detail \(number)")
     }

@@ -23,7 +23,8 @@ struct ContentView: View {
                 }
                 Button("Push 3 screens at once (FIFO order)") {
                     router.push(.appFeature("profile"))
-                    router.pushView { DetailView(number: 1) }
+                    // Tagged — DetailView's "Pop to tag" button jumps back here.
+                    router.pushView(tag: "first-detail") { DetailView(number: 1) }
                     router.pushView { DetailView(number: 2) }
                 }
             }

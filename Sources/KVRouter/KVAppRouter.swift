@@ -140,8 +140,21 @@ public final class KVAppRouter: ObservableObject {
 
     // MARK: - View Builder Registries
 
+    /// Metadata for a custom pushed view — lets ``popTo(tag:)`` and
+    /// ``popTo(_:)-view-type`` target dynamic views whose `.customView(UUID)`
+    /// route is opaque to the caller.
+    struct CustomViewInfo {
+        /// Optional caller-chosen tag from `pushView(tag:)`.
+        let tag: String?
+        /// Fully qualified name of the concrete view type (e.g. `MyApp.DetailView`).
+        let typeName: String
+    }
+
     /// Registry for custom pushed views (keyed by UUID).
     private var customBuilders: [UUID: () -> AnyView] = [:]
+
+    /// Metadata for custom pushed views (kept in sync with `customBuilders`).
+    private var customViewInfo: [UUID: CustomViewInfo] = [:]
 
     /// Registry for custom sheet views.
     private var customSheetBuilders: [UUID: () -> AnyView] = [:]
@@ -245,15 +258,23 @@ extension KVAppRouter {
     /// Push a dynamically built view onto the navigation stack.
     ///
     /// The view is lazily built when the navigation occurs.
-    /// - Parameter build: Closure that builds the view.
-    public func pushView<V: View>(_ build: @escaping () -> V) {
+    /// - Parameters:
+    ///   - tag: Optional tag so this screen can be targeted later with ``popTo(tag:)``.
+    ///   - build: Closure that builds the view.
+    public func pushView<V: View>(tag: String? = nil, _ build: @escaping () -> V) {
         let id = UUID()
         enqueue { [weak self] in
             guard let self else { return }
             self.customBuilders[id] = { AnyView(build()) }
+            self.customViewInfo[id] = CustomViewInfo(tag: tag, typeName: String(reflecting: V.self))
             guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
-                self.customBuilders[id] = nil
+                self.removeCustomView(id)
                 return
+            }
+            // Middleware may have redirected to a different route — drop the
+            // now-unused builder so it can't leak.
+            if finalRoute != .customView(id) {
+                self.removeCustomView(id)
             }
             self.path.append(finalRoute)
         }
@@ -262,9 +283,11 @@ extension KVAppRouter {
     /// Push an already-constructed view onto the navigation stack.
     ///
     /// The view is captured and built lazily.
-    /// - Parameter view: The view to push.
-    public func pushView<V: View>(_ view: V) {
-        pushView { view }
+    /// - Parameters:
+    ///   - view: The view to push.
+    ///   - tag: Optional tag so this screen can be targeted later with ``popTo(tag:)``.
+    public func pushView<V: View>(_ view: V, tag: String? = nil) {
+        pushView(tag: tag) { view }
     }
 
     /// Replace the top route with a new route.
@@ -286,15 +309,21 @@ extension KVAppRouter {
     }
 
     /// Replace the top route with a dynamically built view.
-    /// - Parameter build: Closure that builds the view.
-    public func replaceTopWithView<V: View>(_ build: @escaping () -> V) {
+    /// - Parameters:
+    ///   - tag: Optional tag so this screen can be targeted later with ``popTo(tag:)``.
+    ///   - build: Closure that builds the view.
+    public func replaceTopWithView<V: View>(tag: String? = nil, _ build: @escaping () -> V) {
         let id = UUID()
         enqueue { [weak self] in
             guard let self else { return }
             self.customBuilders[id] = { AnyView(build()) }
+            self.customViewInfo[id] = CustomViewInfo(tag: tag, typeName: String(reflecting: V.self))
             guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
-                self.customBuilders[id] = nil
+                self.removeCustomView(id)
                 return
+            }
+            if finalRoute != .customView(id) {
+                self.removeCustomView(id)
             }
             // Clean up only after middleware approves (see `replaceTop(with:)`).
             self.cleanupTopBuilderIfNeeded()
@@ -379,11 +408,7 @@ extension KVAppRouter {
         enqueue { [weak self] in
             guard let self else { return }
             guard let index = self.path.firstIndex(of: route) else { return }
-            let from = self.path.last
-            guard await self.applyPopMiddlewares(from: from, to: route) else { return }
-            self.isRouterControlledPop = true
-            self.cleanupBuilders(from: index + 1)
-            self.path = Array(self.path.prefix(through: index))
+            await self.performPop(toIndex: index)
         }
     }
 
@@ -394,13 +419,80 @@ extension KVAppRouter {
         enqueue { [weak self] in
             guard let self else { return }
             guard let index = self.path.lastIndex(where: predicate) else { return }
-            let from = self.path.last
-            let to = self.path[index]
-            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
-            self.isRouterControlledPop = true
-            self.cleanupBuilders(from: index + 1)
-            self.path = Array(self.path.prefix(through: index))
+            await self.performPop(toIndex: index)
         }
+    }
+
+    /// Pop back to the most recent screen pushed with the given tag.
+    ///
+    /// Matches views pushed via `pushView(tag:)` / `replaceTopWithView(tag:)`,
+    /// and also typed `.appFeature(tag)` routes — so `popTo(tag: "profile")`
+    /// finds both `pushView(tag: "profile") { … }` and `push(.appFeature("profile"))`.
+    ///
+    /// The current (top) screen is excluded from the search: this always means
+    /// "go *back* to the tagged screen". If no screen below matches, nothing happens.
+    /// Middleware can cancel via `willPop`.
+    /// - Parameter tag: The tag to search for (nearest to the top wins).
+    public func popTo(tag: String) {
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let index = self.path.dropLast().lastIndex(where: { self.route($0, matchesTag: tag) }) else { return }
+            await self.performPop(toIndex: index)
+        }
+    }
+
+    /// Pop back to the most recent screen of the given view type pushed via `pushView`.
+    ///
+    /// ```swift
+    /// router.pushView { DetailView(id: 1) }
+    /// router.pushView { SettingsView() }
+    /// router.popTo(DetailView.self) // back to DetailView(id: 1)
+    /// ```
+    ///
+    /// No tag needed — the router records the concrete view type at push time.
+    /// The current (top) screen is excluded from the search, so calling this
+    /// *from* a `DetailView` pops back to the previous `DetailView` instance.
+    /// If no screen below matches, nothing happens. Middleware can cancel via `willPop`.
+    /// - Parameter viewType: The view type to search for (nearest to the top wins).
+    public func popTo<V: View>(_ viewType: V.Type) {
+        let typeName = String(reflecting: V.self)
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let index = self.path.dropLast().lastIndex(where: { self.route($0, matchesViewType: typeName) }) else { return }
+            await self.performPop(toIndex: index)
+        }
+    }
+
+    // MARK: - Pop Helpers
+
+    /// Shared pop-to-index body: runs pop middleware, then truncates the path
+    /// and cleans up builders of the removed routes.
+    private func performPop(toIndex index: Int) async {
+        let from = path.last
+        let to = path[index]
+        guard await applyPopMiddlewares(from: from, to: to) else { return }
+        isRouterControlledPop = true
+        cleanupBuilders(from: index + 1)
+        path = Array(path.prefix(through: index))
+    }
+
+    /// Whether a route matches a tag: custom views by their recorded tag,
+    /// `.appFeature` by its id.
+    private func route(_ route: KVAppRoute, matchesTag tag: String) -> Bool {
+        switch route {
+        case .customView(let id):
+            return customViewInfo[id]?.tag == tag
+        case .appFeature(let id):
+            return id == tag
+        case .deepLink:
+            return false
+        }
+    }
+
+    /// Whether a route is a custom view built from the given view type.
+    private func route(_ route: KVAppRoute, matchesViewType typeName: String) -> Bool {
+        guard case let .customView(id) = route else { return false }
+        return customViewInfo[id]?.typeName == typeName
     }
 
     /// Pop a specific number of views from the stack.
@@ -729,17 +821,23 @@ extension KVAppRouter {
 
 private extension KVAppRouter {
 
+    /// Remove a custom view's builder and metadata.
+    func removeCustomView(_ id: UUID) {
+        customBuilders[id] = nil
+        customViewInfo[id] = nil
+    }
+
     /// Clean up builder for a specific route if it's a custom view.
     func cleanupBuilder(for route: KVAppRoute) {
         if case let .customView(id) = route {
-            customBuilders[id] = nil
+            removeCustomView(id)
         }
     }
 
     /// Clean up the top builder if it's a custom view.
     func cleanupTopBuilderIfNeeded() {
         if let last = path.last, case let .customView(id) = last {
-            customBuilders[id] = nil
+            removeCustomView(id)
         }
     }
 
@@ -760,6 +858,6 @@ private extension KVAppRouter {
             if case let .customView(id) = route { return id }
             return nil
         })
-        currentIDs.subtracting(newIDs).forEach { customBuilders[$0] = nil }
+        currentIDs.subtracting(newIDs).forEach { removeCustomView($0) }
     }
 }

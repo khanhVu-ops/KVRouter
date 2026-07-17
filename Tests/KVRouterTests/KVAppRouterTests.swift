@@ -84,6 +84,85 @@ final class KVAppRouterTests: XCTestCase {
         XCTAssertEqual(router.path, [.appFeature("b")])
     }
 
+    // MARK: - Pop to Specific Screen (tag / view type)
+
+    private struct ScreenA: View { var body: some View { Text("A") } }
+    private struct ScreenB: View { var body: some View { Text("B") } }
+
+    func testPopToTagTargetsDynamicView() async {
+        let router = KVAppRouter()
+        router.push(.appFeature("home"))
+        router.pushView(tag: "detail") { ScreenA() }
+        router.pushView { ScreenB() }
+        router.pushView { ScreenB() }
+        await waitUntil { router.path.count == 4 }
+
+        router.popTo(tag: "detail")
+        await waitUntil { router.path.count == 2 }
+        XCTAssertEqual(router.path.count, 2, "Should pop back to the tagged screen")
+        XCTAssertEqual(router.path.first, .appFeature("home"))
+    }
+
+    func testPopToTagMatchesAppFeature() async {
+        let router = KVAppRouter()
+        router.push(.appFeature("home"))
+        router.pushView { ScreenA() }
+        router.pushView { ScreenB() }
+        await waitUntil { router.path.count == 3 }
+
+        router.popTo(tag: "home")
+        await waitUntil { router.path.count == 1 }
+        XCTAssertEqual(router.path, [.appFeature("home")])
+    }
+
+    func testPopToTagNotFoundDoesNothing() async {
+        let router = KVAppRouter()
+        router.pushView(tag: "a") { ScreenA() }
+        await waitUntil { router.path.count == 1 }
+
+        router.popTo(tag: "missing")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(router.path.count, 1)
+    }
+
+    func testPopToViewType() async {
+        let router = KVAppRouter()
+        router.pushView { ScreenA() }
+        router.pushView { ScreenB() }
+        router.pushView { ScreenB() }
+        await waitUntil { router.path.count == 3 }
+
+        router.popTo(ScreenA.self)
+        await waitUntil { router.path.count == 1 }
+        XCTAssertEqual(router.path.count, 1, "Should pop back to the ScreenA instance")
+    }
+
+    func testPopToViewTypePicksNearestMatch() async {
+        let router = KVAppRouter()
+        router.pushView { ScreenA() }
+        router.pushView { ScreenB() }
+        router.pushView { ScreenA() }
+        router.pushView { ScreenB() }
+        await waitUntil { router.path.count == 4 }
+
+        router.popTo(ScreenA.self)
+        await waitUntil { router.path.count == 3 }
+        XCTAssertEqual(router.path.count, 3, "Should pop to the ScreenA nearest to the top")
+    }
+
+    func testPopToViewTypeFromMatchingScreenGoesToPreviousInstance() async {
+        let router = KVAppRouter()
+        router.pushView { ScreenA() }
+        router.pushView { ScreenA() }
+        await waitUntil { router.path.count == 2 }
+
+        // Standing on a ScreenA: the top is excluded, so this pops back
+        // to the previous ScreenA instead of matching itself (no-op).
+        router.popTo(ScreenA.self)
+        await waitUntil { router.path.count == 1 }
+        XCTAssertEqual(router.path.count, 1)
+    }
+
     func testRestorePathDropsCustomViewRoutes() async {
         let router = KVAppRouter()
         router.restorePath([.appFeature("a"), .customView(UUID()), .appFeature("b")])
