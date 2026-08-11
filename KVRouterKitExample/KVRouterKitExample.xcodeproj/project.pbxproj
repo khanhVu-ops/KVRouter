@@ -7,17 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3368D460300AE49200E6FB6E /* KVRouter in Frameworks */ = {isa = PBXBuildFile; productRef = 3368D45F300AE49200E6FB6E /* KVRouter */; };
+		3368D460300AE49200E6FB6E /* KVRouterKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3368D45F300AE49200E6FB6E /* KVRouterKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		3368D44B300AE49000E6FB6E /* KVRouterExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KVRouterExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3368D44B300AE49000E6FB6E /* KVRouterKitExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KVRouterKitExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		3368D44D300AE49000E6FB6E /* KVRouterExample */ = {
+		3368D44D300AE49000E6FB6E /* KVRouterKitExample */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = KVRouterExample;
+			path = KVRouterKitExample;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -27,7 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3368D460300AE49200E6FB6E /* KVRouter in Frameworks */,
+				3368D460300AE49200E6FB6E /* KVRouterKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -37,7 +37,7 @@
 		3368D442300AE49000E6FB6E = {
 			isa = PBXGroup;
 			children = (
-				3368D44D300AE49000E6FB6E /* KVRouterExample */,
+				3368D44D300AE49000E6FB6E /* KVRouterKitExample */,
 				3368D44C300AE49000E6FB6E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -45,7 +45,7 @@
 		3368D44C300AE49000E6FB6E /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3368D44B300AE49000E6FB6E /* KVRouterExample.app */,
+				3368D44B300AE49000E6FB6E /* KVRouterKitExample.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -53,9 +53,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3368D44A300AE49000E6FB6E /* KVRouterExample */ = {
+		3368D44A300AE49000E6FB6E /* KVRouterKitExample */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3368D456300AE49100E6FB6E /* Build configuration list for PBXNativeTarget "KVRouterExample" */;
+			buildConfigurationList = 3368D456300AE49100E6FB6E /* Build configuration list for PBXNativeTarget "KVRouterKitExample" */;
 			buildPhases = (
 				3368D447300AE49000E6FB6E /* Sources */,
 				3368D448300AE49000E6FB6E /* Frameworks */,
@@ -66,14 +66,14 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				3368D44D300AE49000E6FB6E /* KVRouterExample */,
+				3368D44D300AE49000E6FB6E /* KVRouterKitExample */,
 			);
-			name = KVRouterExample;
+			name = KVRouterKitExample;
 			packageProductDependencies = (
-				3368D45F300AE49200E6FB6E /* KVRouter */,
+				3368D45F300AE49200E6FB6E /* KVRouterKit */,
 			);
-			productName = KVRouterExample;
-			productReference = 3368D44B300AE49000E6FB6E /* KVRouterExample.app */;
+			productName = KVRouterKitExample;
+			productReference = 3368D44B300AE49000E6FB6E /* KVRouterKitExample.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -91,7 +91,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 3368D446300AE49000E6FB6E /* Build configuration list for PBXProject "KVRouterExample" */;
+			buildConfigurationList = 3368D446300AE49000E6FB6E /* Build configuration list for PBXProject "KVRouterKitExample" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -108,7 +108,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				3368D44A300AE49000E6FB6E /* KVRouterExample */,
+				3368D44A300AE49000E6FB6E /* KVRouterKitExample */,
 			);
 		};
 /* End PBXProject section */
@@ -275,7 +275,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = hehe.KVRouterExample;
+				PRODUCT_BUNDLE_IDENTIFIER = hehe.KVRouterKitExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -307,7 +307,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = hehe.KVRouterExample;
+				PRODUCT_BUNDLE_IDENTIFIER = hehe.KVRouterKitExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -322,7 +322,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		3368D446300AE49000E6FB6E /* Build configuration list for PBXProject "KVRouterExample" */ = {
+		3368D446300AE49000E6FB6E /* Build configuration list for PBXProject "KVRouterKitExample" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3368D454300AE49100E6FB6E /* Debug */,
@@ -331,7 +331,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3368D456300AE49100E6FB6E /* Build configuration list for PBXNativeTarget "KVRouterExample" */ = {
+		3368D456300AE49100E6FB6E /* Build configuration list for PBXNativeTarget "KVRouterKitExample" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3368D457300AE49100E6FB6E /* Debug */,
@@ -350,9 +350,9 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		3368D45F300AE49200E6FB6E /* KVRouter */ = {
+		3368D45F300AE49200E6FB6E /* KVRouterKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = KVRouter;
+			productName = KVRouterKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

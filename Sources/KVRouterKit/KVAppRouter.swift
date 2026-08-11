@@ -1,6 +1,6 @@
 //
 //  KVAppRouter.swift
-//  KVRouter
+//  KVRouterKit
 //
 //  Created by Khanh Vu.
 //
@@ -90,7 +90,8 @@ public final class KVAppRouter: ObservableObject {
 
     // MARK: - Navigation State
 
-    private var _path: [KVAppRoute] = []
+    private var _navigationEntries: [KVNavigationEntry] = []
+    private var transitionOverrides: [UUID: KVNavigationTransition] = [:]
     private var _sheet: KVSheetRoute?
     private var _fullCover: KVFullCoverRoute?
 
@@ -98,13 +99,31 @@ public final class KVAppRouter: ObservableObject {
     public var path: [KVAppRoute] {
         get {
             trackAccess(\.path)
-            return _path
+            return _navigationEntries.map(\.route)
         }
         set {
-            let oldValue = _path
-            withTrackedMutation(\.path) { _path = newValue }
-            handlePathChange(from: oldValue, to: newValue)
+            reconcileEntries(with: newValue)
         }
+    }
+
+    var navigationEntries: [KVNavigationEntry] {
+        get {
+            trackAccess(\.path)
+            return _navigationEntries
+        }
+        set {
+            let oldEntries = _navigationEntries
+            withTrackedMutation(\.path) { _navigationEntries = newValue }
+            cleanupRemovedEntries(from: oldEntries, to: newValue)
+            handlePathChange(
+                from: oldEntries.map(\.route),
+                to: newValue.map(\.route)
+            )
+        }
+    }
+
+    func transitionOverride(for entry: KVNavigationEntry) -> KVNavigationTransition? {
+        transitionOverrides[entry.id]
     }
 
     /// Current sheet route (nil = no sheet presented).
@@ -131,6 +150,8 @@ public final class KVAppRouter: ObservableObject {
 
     /// Middleware chain for route interception.
     private let middlewares: [KVRouteMiddleware]
+
+    weak var transitionDriver: (any KVTransitionDriving)?
 
     /// Host app: return a view for ``KVAppRoute/appFeature(_:)`` ids (e.g. `"profile"`). `nil` → ``EmptyView`` in ``buildView(for:)``.
     public var appFeatureViewBuilder: ((String) -> AnyView?)?
@@ -192,6 +213,17 @@ public final class KVAppRouter: ObservableObject {
         }
     }
 
+    private func performNavigation(
+        _ request: KVTransitionRequest,
+        mutation: @escaping @MainActor () -> Void
+    ) async {
+        if let transitionDriver {
+            await transitionDriver.perform(request, mutation: mutation)
+        } else {
+            mutation()
+        }
+    }
+
     // MARK: - Path Change Observation
 
     /// Flag to distinguish router-controlled pops from system-initiated pops
@@ -213,11 +245,6 @@ public final class KVAppRouter: ObservableObject {
         // Find routes that were removed by the system
         let removedRoutes = oldPath.suffix(from: newPath.count)
 
-        // Clean up builders for removed routes to prevent memory leaks
-        for route in removedRoutes {
-            cleanupBuilder(for: route)
-        }
-
         // Run middleware as side-effects for each removed route
         for (index, route) in removedRoutes.enumerated().reversed() {
             let destination: KVAppRoute? = (newPath.count + index - 1 >= 0 && newPath.count + index - 1 < oldPath.count)
@@ -226,6 +253,36 @@ public final class KVAppRouter: ObservableObject {
             Task { @MainActor in
                 await self.applyPopMiddlewares(from: route, to: destination)
             }
+        }
+    }
+
+    private func reconcileEntries(with routes: [KVAppRoute]) {
+        let oldEntries = _navigationEntries
+        let prefixCount = zip(oldEntries.map(\.route), routes)
+            .prefix { $0 == $1 }
+            .count
+        let prefix = oldEntries.prefix(prefixCount)
+        let suffix = routes.dropFirst(prefixCount).map { KVNavigationEntry(route: $0) }
+        navigationEntries = Array(prefix) + suffix
+    }
+
+    private func makeEntry(
+        route: KVAppRoute,
+        transition: KVNavigationTransition?
+    ) -> KVNavigationEntry {
+        let entry = KVNavigationEntry(route: route)
+        transitionOverrides[entry.id] = transition
+        return entry
+    }
+
+    private func cleanupRemovedEntries(
+        from oldEntries: [KVNavigationEntry],
+        to newEntries: [KVNavigationEntry]
+    ) {
+        let liveIDs = Set(newEntries.map(\.id))
+        for entry in oldEntries where !liveIDs.contains(entry.id) {
+            transitionOverrides[entry.id] = nil
+            cleanupBuilder(for: entry.route)
         }
     }
 }
@@ -248,10 +305,34 @@ extension KVAppRouter {
     /// Push a typed route onto the navigation stack.
     /// - Parameter route: The route to navigate to.
     public func push(_ route: KVAppRoute) {
+        push(route, transition: nil)
+    }
+
+    /// Push a typed route with a per-navigation transition override.
+    public func push(
+        _ route: KVAppRoute,
+        transition: KVNavigationTransition
+    ) {
+        push(route, transition: Optional(transition))
+    }
+
+    private func push(
+        _ route: KVAppRoute,
+        transition: KVNavigationTransition?
+    ) {
         enqueue { [weak self] in
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
-            self.path.append(finalRoute)
+            let entry = self.makeEntry(route: finalRoute, transition: transition)
+            let request = KVTransitionRequest(
+                operation: .push,
+                from: self.navigationEntries.last,
+                to: entry,
+                transitionOverride: transition
+            )
+            await self.performNavigation(request) {
+                self.navigationEntries.append(entry)
+            }
         }
     }
 
@@ -262,6 +343,23 @@ extension KVAppRouter {
     ///   - tag: Optional tag so this screen can be targeted later with ``popTo(tag:)``.
     ///   - build: Closure that builds the view.
     public func pushView<V: View>(tag: String? = nil, _ build: @escaping () -> V) {
+        pushView(tag: tag, transition: nil, build)
+    }
+
+    /// Push a dynamically built view with a per-navigation transition override.
+    public func pushView<V: View>(
+        tag: String? = nil,
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    ) {
+        pushView(tag: tag, transition: Optional(transition), build)
+    }
+
+    private func pushView<V: View>(
+        tag: String?,
+        transition: KVNavigationTransition?,
+        _ build: @escaping () -> V
+    ) {
         let id = UUID()
         enqueue { [weak self] in
             guard let self else { return }
@@ -276,7 +374,16 @@ extension KVAppRouter {
             if finalRoute != .customView(id) {
                 self.removeCustomView(id)
             }
-            self.path.append(finalRoute)
+            let entry = self.makeEntry(route: finalRoute, transition: transition)
+            let request = KVTransitionRequest(
+                operation: .push,
+                from: self.navigationEntries.last,
+                to: entry,
+                transitionOverride: transition
+            )
+            await self.performNavigation(request) {
+                self.navigationEntries.append(entry)
+            }
         }
     }
 
@@ -290,20 +397,41 @@ extension KVAppRouter {
         pushView(tag: tag) { view }
     }
 
+    /// Push an already-constructed view with a per-navigation transition override.
+    public func pushView<V: View>(
+        _ view: V,
+        tag: String? = nil,
+        transition: KVNavigationTransition
+    ) {
+        pushView(tag: tag, transition: transition) { view }
+    }
+
     /// Replace the top route with a new route.
     /// - Parameter route: The route to replace with.
     public func replaceTop(with route: KVAppRoute) {
+        replaceTop(with: route, transition: nil)
+    }
+
+    /// Replace the top route with a per-navigation transition override.
+    public func replaceTop(
+        with route: KVAppRoute,
+        transition: KVNavigationTransition
+    ) {
+        replaceTop(with: route, transition: Optional(transition))
+    }
+
+    private func replaceTop(
+        with route: KVAppRoute,
+        transition: KVNavigationTransition?
+    ) {
         enqueue { [weak self] in
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
-            // Clean up only after middleware approves, so a cancelled
-            // navigation doesn't strand the current top view without its builder.
-            self.cleanupTopBuilderIfNeeded()
-
-            if self.path.isEmpty {
-                self.path = [finalRoute]
+            let entry = self.makeEntry(route: finalRoute, transition: transition)
+            if self.navigationEntries.isEmpty {
+                self.navigationEntries = [entry]
             } else {
-                self.path[self.path.count - 1] = finalRoute
+                self.navigationEntries[self.navigationEntries.count - 1] = entry
             }
         }
     }
@@ -313,6 +441,23 @@ extension KVAppRouter {
     ///   - tag: Optional tag so this screen can be targeted later with ``popTo(tag:)``.
     ///   - build: Closure that builds the view.
     public func replaceTopWithView<V: View>(tag: String? = nil, _ build: @escaping () -> V) {
+        replaceTopWithView(tag: tag, transition: nil, build)
+    }
+
+    /// Replace the top route with a dynamic view and transition override.
+    public func replaceTopWithView<V: View>(
+        tag: String? = nil,
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    ) {
+        replaceTopWithView(tag: tag, transition: Optional(transition), build)
+    }
+
+    private func replaceTopWithView<V: View>(
+        tag: String?,
+        transition: KVNavigationTransition?,
+        _ build: @escaping () -> V
+    ) {
         let id = UUID()
         enqueue { [weak self] in
             guard let self else { return }
@@ -325,12 +470,11 @@ extension KVAppRouter {
             if finalRoute != .customView(id) {
                 self.removeCustomView(id)
             }
-            // Clean up only after middleware approves (see `replaceTop(with:)`).
-            self.cleanupTopBuilderIfNeeded()
-            if self.path.isEmpty {
-                self.path = [finalRoute]
+            let entry = self.makeEntry(route: finalRoute, transition: transition)
+            if self.navigationEntries.isEmpty {
+                self.navigationEntries = [entry]
             } else {
-                self.path[self.path.count - 1] = finalRoute
+                self.navigationEntries[self.navigationEntries.count - 1] = entry
             }
         }
     }
@@ -375,13 +519,19 @@ extension KVAppRouter {
     public func pop() {
         enqueue { [weak self] in
             guard let self else { return }
-            guard !self.path.isEmpty else { return }
-            let from = self.path.last
-            let to = self.path.count >= 2 ? self.path[self.path.count - 2] : nil
-            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
+            guard let fromEntry = self.navigationEntries.last else { return }
+            let toEntry = self.navigationEntries.dropLast().last
+            guard await self.applyPopMiddlewares(from: fromEntry.route, to: toEntry?.route) else { return }
+            let request = KVTransitionRequest(
+                operation: .pop,
+                from: fromEntry,
+                to: toEntry,
+                transitionOverride: self.transitionOverride(for: fromEntry)
+            )
             self.isRouterControlledPop = true
-            let last = self.path.removeLast()
-            self.cleanupBuilder(for: last)
+            await self.performNavigation(request) {
+                self.navigationEntries.removeLast()
+            }
         }
     }
 
@@ -390,12 +540,10 @@ extension KVAppRouter {
     public func popToRoot() {
         enqueue { [weak self] in
             guard let self else { return }
-            guard !self.path.isEmpty else { return }
-            let from = self.path.last
-            guard await self.applyPopMiddlewares(from: from, to: nil) else { return }
+            guard let fromEntry = self.navigationEntries.last else { return }
+            guard await self.applyPopMiddlewares(from: fromEntry.route, to: nil) else { return }
             self.isRouterControlledPop = true
-            self.path.forEach { self.cleanupBuilder(for: $0) }
-            self.path.removeAll(keepingCapacity: true)
+            self.navigationEntries = []
         }
     }
 
@@ -468,12 +616,24 @@ extension KVAppRouter {
     /// Shared pop-to-index body: runs pop middleware, then truncates the path
     /// and cleans up builders of the removed routes.
     private func performPop(toIndex index: Int) async {
-        let from = path.last
-        let to = path[index]
-        guard await applyPopMiddlewares(from: from, to: to) else { return }
+        guard let fromEntry = navigationEntries.last else { return }
+        let toEntry = navigationEntries[index]
+        guard await applyPopMiddlewares(from: fromEntry.route, to: toEntry.route) else { return }
         isRouterControlledPop = true
-        cleanupBuilders(from: index + 1)
-        path = Array(path.prefix(through: index))
+        let removedCount = navigationEntries.count - index - 1
+        guard removedCount == 1 else {
+            self.navigationEntries = Array(self.navigationEntries.prefix(through: index))
+            return
+        }
+        let request = KVTransitionRequest(
+            operation: .pop,
+            from: fromEntry,
+            to: toEntry,
+            transitionOverride: transitionOverride(for: fromEntry)
+        )
+        await performNavigation(request) {
+            self.navigationEntries.removeLast()
+        }
     }
 
     /// Whether a route matches a tag: custom views by their recorded tag,
@@ -503,16 +663,64 @@ extension KVAppRouter {
             guard let self else { return }
             let removeCount = min(count, self.path.count)
             guard removeCount > 0 else { return }
-            let from = self.path.last
+            guard let fromEntry = self.navigationEntries.last else { return }
             let targetIndex = self.path.count - removeCount
-            let to: KVAppRoute? = targetIndex > 0 ? self.path[targetIndex - 1] : nil
-            guard await self.applyPopMiddlewares(from: from, to: to) else { return }
+            let toEntry = targetIndex > 0 ? self.navigationEntries[targetIndex - 1] : nil
+            guard await self.applyPopMiddlewares(from: fromEntry.route, to: toEntry?.route) else { return }
             self.isRouterControlledPop = true
-            for _ in 0..<removeCount {
-                guard let last = self.path.popLast() else { break }
-                self.cleanupBuilder(for: last)
+            guard removeCount == 1 else {
+                self.navigationEntries = Array(self.navigationEntries.dropLast(removeCount))
+                return
+            }
+            let request = KVTransitionRequest(
+                operation: .pop,
+                from: fromEntry,
+                to: toEntry,
+                transitionOverride: self.transitionOverride(for: fromEntry)
+            )
+            await self.performNavigation(request) {
+                self.navigationEntries.removeLast()
             }
         }
+    }
+
+    func interactivePopRequest() -> KVTransitionRequest? {
+        guard let from = navigationEntries.last else { return nil }
+        let to = navigationEntries.dropLast().last
+        return KVTransitionRequest(
+            operation: .pop,
+            from: from,
+            to: to,
+            transitionOverride: transitionOverride(for: from)
+        )
+    }
+
+    func allowInteractivePop(_ request: KVTransitionRequest) async -> Bool {
+        guard navigationEntries.last?.id == request.from?.id else { return false }
+        return await applyPopMiddlewares(
+            from: request.from?.route,
+            to: request.to?.route
+        )
+    }
+
+    func prepareInteractivePop(_ request: KVTransitionRequest) {
+        guard navigationEntries.last?.id == request.from?.id else { return }
+        isRouterControlledPop = true
+    }
+
+    func cancelInteractivePopPreparation() {
+        isRouterControlledPop = false
+    }
+
+    func commitInteractivePop(_ request: KVTransitionRequest) -> Bool {
+        guard navigationEntries.last?.id == request.from?.id else { return false }
+        isRouterControlledPop = true
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        _ = withTransaction(transaction) {
+            navigationEntries.removeLast()
+        }
+        return true
     }
 }
 

@@ -1,6 +1,6 @@
 //
 //  KVRouterEnvironment.swift
-//  KVRouter
+//  KVRouterKit
 //
 //  Created by Khanh Vu.
 //
@@ -19,6 +19,26 @@ import SwiftUI
 private struct KVAppRouterKey: EnvironmentKey {
     static let defaultValue: KVAppRouter = MainActor.assumeIsolated {
         KVAppRouter(middlewares: [])
+    }
+}
+
+private struct KVTransitionNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+private struct KVTransitionSourceRegistryKey: EnvironmentKey {
+    static let defaultValue: KVTransitionSourceRegistry? = nil
+}
+
+extension EnvironmentValues {
+    var kvTransitionNamespace: Namespace.ID? {
+        get { self[KVTransitionNamespaceKey.self] }
+        set { self[KVTransitionNamespaceKey.self] = newValue }
+    }
+
+    var kvTransitionSourceRegistry: KVTransitionSourceRegistry? {
+        get { self[KVTransitionSourceRegistryKey.self] }
+        set { self[KVTransitionSourceRegistryKey.self] = newValue }
     }
 }
 

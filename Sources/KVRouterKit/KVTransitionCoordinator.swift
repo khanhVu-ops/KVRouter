@@ -1,0 +1,496 @@
+import SwiftUI
+import UIKit
+
+enum KVTransitionBackend: Equatable {
+    case system
+    case nativeZoom
+    case custom
+
+    @MainActor
+    static func resolve(
+        _ transition: KVNavigationTransition,
+        supportsNativeZoom: Bool
+    ) -> Self {
+        switch transition.kind {
+        case .system:
+            return .system
+        case .zoom where supportsNativeZoom:
+            return .nativeZoom
+        default:
+            return .custom
+        }
+    }
+}
+
+struct KVResolvedTransition {
+    let transition: KVNavigationTransition
+    let backend: KVTransitionBackend
+}
+
+private struct KVControllerTransitionMetadata {
+    weak var controller: UIViewController?
+    let resolved: KVResolvedTransition
+}
+
+private struct KVNavigationAnimationIntent {
+    let id = UUID()
+    let request: KVTransitionRequest
+}
+
+@MainActor
+final class KVTransitionTransaction {
+    let id = UUID()
+    let request: KVTransitionRequest
+    let resolved: KVResolvedTransition
+    let descriptor: KVTransitionDescriptor
+    let isInteractive: Bool
+    var animator: KVViewControllerTransitionAnimator?
+    var continuation: CheckedContinuation<Void, Never>?
+    var watchdog: Task<Void, Never>?
+
+    init(
+        request: KVTransitionRequest,
+        resolved: KVResolvedTransition,
+        descriptor: KVTransitionDescriptor,
+        isInteractive: Bool = false
+    ) {
+        self.request = request
+        self.resolved = resolved
+        self.descriptor = descriptor
+        self.isInteractive = isInteractive
+    }
+}
+
+@MainActor
+final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
+    let defaultTransition: KVNavigationTransition
+    private(set) var pendingTransaction: KVTransitionTransaction?
+    var isBridgeAttached = false
+    var reduceMotion = false
+    var hasSource: (AnyHashable) -> Bool = { _ in false }
+    weak var router: KVAppRouter? {
+        didSet { bridge?.refreshInteractivePopAvailability() }
+    }
+
+    private var bridge: KVNavigationControllerBridge?
+    private var nativeZoomEntryIDs: Set<UUID> = []
+    private var navigationAnimationIntent: KVNavigationAnimationIntent?
+    // SwiftUI may remove the route before UIKit asks for its pop animator.
+    private var controllerMetadata: [
+        ObjectIdentifier: KVControllerTransitionMetadata
+    ] = [:]
+
+    var sourceRegistry: KVTransitionSourceRegistry? {
+        didSet {
+            let registry = sourceRegistry
+            hasSource = { [weak registry] id in
+                registry?.source(for: id) != nil
+            }
+        }
+    }
+
+    init(defaultTransition: KVNavigationTransition) {
+        self.defaultTransition = defaultTransition
+    }
+
+    func attach(to navigationController: UINavigationController) {
+        if let bridge {
+            bridge.attach(to: navigationController)
+        } else {
+            let bridge = KVNavigationControllerBridge(coordinator: self)
+            self.bridge = bridge
+            bridge.attach(to: navigationController)
+        }
+        isBridgeAttached = true
+    }
+
+    func detach() {
+        bridge?.detach()
+        bridge = nil
+        isBridgeAttached = false
+        navigationAnimationIntent = nil
+        completePendingTransition(cancelled: true)
+    }
+
+    func resolve(
+        override: KVNavigationTransition?,
+        supportsNativeZoom: Bool
+    ) -> KVResolvedTransition {
+        let requested = override ?? defaultTransition
+        if case .zoom(let sourceID) = requested.kind,
+           !hasSource(sourceID) {
+            return KVResolvedTransition(
+                transition: .scaleAndFade,
+                backend: .custom
+            )
+        }
+        return KVResolvedTransition(
+            transition: requested,
+            backend: .resolve(requested, supportsNativeZoom: supportsNativeZoom)
+        )
+    }
+
+    func resolve(
+        _ request: KVTransitionRequest,
+        supportsNativeZoom: Bool
+    ) -> KVResolvedTransition {
+        if request.operation == .pop,
+           case .zoom = request.transitionOverride?.kind,
+           let from = request.from {
+            let transition = request.transitionOverride ?? defaultTransition
+            return KVResolvedTransition(
+                transition: transition,
+                backend: supportsNativeZoom
+                    && nativeZoomEntryIDs.contains(from.id)
+                    ? .nativeZoom
+                    : .custom
+            )
+        }
+
+        return resolve(
+            override: request.transitionOverride,
+            supportsNativeZoom: supportsNativeZoom
+        )
+    }
+
+    func usesNativeZoom(for entry: KVNavigationEntry) -> Bool {
+        nativeZoomEntryIDs.contains(entry.id)
+    }
+
+    func perform(
+        _ request: KVTransitionRequest,
+        mutation: @escaping @MainActor () -> Void
+    ) async {
+        let resolved = resolve(
+            request,
+            supportsNativeZoom: Self.supportsNativeZoom
+        )
+
+        guard request.operation == .push || request.operation == .pop else {
+            mutation()
+            return
+        }
+
+        switch resolved.backend {
+        case .system:
+            prepareNavigationAnimationIntent(for: request)
+            mutation()
+            bridge?.refreshInteractivePopAvailability()
+        case .nativeZoom:
+            if request.operation == .push, let destination = request.to {
+                nativeZoomEntryIDs.insert(destination.id)
+            }
+            prepareNavigationAnimationIntent(for: request)
+            mutation()
+            bridge?.refreshInteractivePopAvailability()
+        case .custom:
+            let descriptor = resolved.transition.descriptor(
+                operation: request.operation,
+                reduceMotion: reduceMotion
+            )
+            guard isBridgeAttached else {
+                performAnimatedMutation(mutation, descriptor: descriptor)
+                bridge?.refreshInteractivePopAvailability()
+                return
+            }
+
+            let transaction = KVTransitionTransaction(
+                request: request,
+                resolved: resolved,
+                descriptor: descriptor
+            )
+            pendingTransaction = transaction
+
+            await withCheckedContinuation { continuation in
+                transaction.continuation = continuation
+                performAnimatedMutation(mutation, descriptor: descriptor)
+                scheduleWatchdog(for: transaction)
+            }
+        }
+    }
+
+    func animator(
+        for operation: UINavigationController.Operation
+    ) -> KVViewControllerTransitionAnimator? {
+        guard let transaction = pendingTransaction,
+              operation.matches(transaction.request.operation) else {
+            return nil
+        }
+        if let animator = transaction.animator {
+            return animator
+        }
+
+        let animator = makeAnimator(
+            operation: transaction.request.operation,
+            resolved: transaction.resolved,
+            descriptor: transaction.descriptor
+        ) { [weak self] cancelled in
+            self?.completePendingTransition(
+                id: transaction.id,
+                cancelled: cancelled
+            )
+        }
+        transaction.animator = animator
+        return animator
+    }
+
+    func animator(
+        for operation: UINavigationController.Operation,
+        from fromViewController: UIViewController,
+        to _: UIViewController
+    ) -> KVViewControllerTransitionAnimator? {
+        if let animator = animator(for: operation) {
+            return animator
+        }
+        guard operation == .pop,
+              let metadata = controllerMetadata[
+                ObjectIdentifier(fromViewController)
+              ],
+              metadata.controller === fromViewController,
+              metadata.resolved.backend == .custom else {
+            return nil
+        }
+
+        let resolved = metadata.resolved
+        let descriptor = resolved.transition.descriptor(
+            operation: .pop,
+            reduceMotion: reduceMotion
+        )
+        return makeAnimator(
+            operation: .pop,
+            resolved: resolved,
+            descriptor: descriptor
+        ) { _ in }
+    }
+
+    func shouldForceNavigationAnimation(
+        for operation: UINavigationController.Operation,
+        from fromViewController: UIViewController?,
+        to _: UIViewController?
+    ) -> Bool {
+        if let intent = navigationAnimationIntent,
+           operation.matches(intent.request.operation) {
+            navigationAnimationIntent = nil
+            return true
+        }
+
+        if let transaction = pendingTransaction {
+            return transaction.resolved.backend == .custom
+                && operation.matches(transaction.request.operation)
+        }
+
+        guard operation == .pop,
+              let fromViewController,
+              let metadata = controllerMetadata[
+                ObjectIdentifier(fromViewController)
+              ],
+              metadata.controller === fromViewController else {
+            return false
+        }
+        return true
+    }
+
+    func synchronizeControllerMetadata(
+        in navigationController: UINavigationController
+    ) {
+        let liveControllerIDs = Set(
+            navigationController.viewControllers.map {
+                ObjectIdentifier($0)
+            }
+        )
+        controllerMetadata = controllerMetadata.filter { key, metadata in
+            metadata.controller != nil && liveControllerIDs.contains(key)
+        }
+
+        guard let router else { return }
+        let controllers = navigationController.viewControllers.dropFirst()
+        let entries = router.navigationEntries
+        for (index, pair) in zip(controllers, entries).enumerated() {
+            let (controller, entry) = pair
+            let transition = router.transitionOverride(for: entry)
+                ?? defaultTransition
+            let previousEntry = index > 0 ? entries[index - 1] : nil
+            let request = KVTransitionRequest(
+                operation: .pop,
+                from: entry,
+                to: previousEntry,
+                transitionOverride: transition
+            )
+            controllerMetadata[ObjectIdentifier(controller)] =
+                KVControllerTransitionMetadata(
+                    controller: controller,
+                    resolved: resolve(
+                        request,
+                        supportsNativeZoom: Self.supportsNativeZoom
+                    )
+                )
+        }
+    }
+
+    private func makeAnimator(
+        operation: KVTransitionOperation,
+        resolved: KVResolvedTransition,
+        descriptor: KVTransitionDescriptor,
+        onCompletion: @escaping (Bool) -> Void
+    ) -> KVViewControllerTransitionAnimator {
+        KVViewControllerTransitionAnimator(
+            operation: operation,
+            descriptor: descriptor,
+            heroSourceProvider: heroSourceProvider(
+                for: resolved.transition
+            ),
+            heroFallbackDescriptor: KVNavigationTransition.scaleAndFade
+                .descriptor(
+                    operation: operation,
+                    reduceMotion: reduceMotion
+                ),
+            onCompletion: onCompletion
+        )
+    }
+
+    private func heroSourceProvider(
+        for transition: KVNavigationTransition
+    ) -> (() -> KVTransitionSourceRegistry.Source?)? {
+        guard case .zoom(let sourceID) = transition.kind else { return nil }
+        return { [weak sourceRegistry] in
+            sourceRegistry?.source(for: sourceID)
+        }
+    }
+
+    func navigationControllerDidShow(
+        _ navigationController: UINavigationController
+    ) {
+        navigationAnimationIntent = nil
+        completePendingTransition(cancelled: false)
+        synchronizeControllerMetadata(in: navigationController)
+        bridge?.refreshInteractivePopAvailability()
+    }
+
+    func completePendingTransition(cancelled: Bool) {
+        guard let id = pendingTransaction?.id else { return }
+        completePendingTransition(id: id, cancelled: cancelled)
+    }
+
+    func retainEntryMetadata(for entryIDs: Set<UUID>) {
+        nativeZoomEntryIDs.formIntersection(entryIDs)
+        bridge?.refreshInteractivePopAvailability()
+    }
+
+    func canBeginInteractivePop() -> Bool {
+        guard pendingTransaction == nil,
+              let request = router?.interactivePopRequest() else {
+            return false
+        }
+        let resolved = resolve(
+            request,
+            supportsNativeZoom: Self.supportsNativeZoom
+        )
+        return resolved.backend == .custom
+            && resolved.transition.supportsInteractiveBack
+    }
+
+    func beginInteractivePop() -> KVTransitionRequest? {
+        guard canBeginInteractivePop(),
+              let router,
+              let request = router.interactivePopRequest() else {
+            return nil
+        }
+        let resolved = resolve(
+            request,
+            supportsNativeZoom: Self.supportsNativeZoom
+        )
+        let descriptor = resolved.transition.descriptor(
+            operation: .pop,
+            reduceMotion: reduceMotion
+        )
+        pendingTransaction = KVTransitionTransaction(
+            request: request,
+            resolved: resolved,
+            descriptor: descriptor,
+            isInteractive: true
+        )
+        router.prepareInteractivePop(request)
+        return request
+    }
+
+    func allowInteractivePop(_ request: KVTransitionRequest) async -> Bool {
+        guard let router else { return false }
+        return await router.allowInteractivePop(request)
+    }
+
+    private func completePendingTransition(
+        id: UUID,
+        cancelled: Bool
+    ) {
+        guard let transaction = pendingTransaction,
+              transaction.id == id else {
+            return
+        }
+        transaction.watchdog?.cancel()
+        transaction.watchdog = nil
+        pendingTransaction = nil
+        if transaction.isInteractive {
+            if cancelled {
+                router?.cancelInteractivePopPreparation()
+            } else {
+                _ = router?.commitInteractivePop(transaction.request)
+            }
+        }
+        let continuation = transaction.continuation
+        transaction.continuation = nil
+        continuation?.resume()
+        bridge?.refreshInteractivePopAvailability()
+    }
+
+    private func performAnimatedMutation(
+        _ mutation: () -> Void,
+        descriptor: KVTransitionDescriptor
+    ) {
+        withAnimation(.linear(duration: descriptor.animation.duration), mutation)
+    }
+
+    private func prepareNavigationAnimationIntent(
+        for request: KVTransitionRequest
+    ) {
+        let intent = KVNavigationAnimationIntent(request: request)
+        navigationAnimationIntent = intent
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.25))
+            guard self?.navigationAnimationIntent?.id == intent.id else { return }
+            self?.navigationAnimationIntent = nil
+        }
+    }
+
+    private func scheduleWatchdog(for transaction: KVTransitionTransaction) {
+        guard pendingTransaction?.id == transaction.id else { return }
+        let nanoseconds = UInt64(
+            max(transaction.descriptor.animation.duration + 1, 1.25)
+                * 1_000_000_000
+        )
+        transaction.watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.completePendingTransition(
+                id: transaction.id,
+                cancelled: false
+            )
+        }
+    }
+
+    private static var supportsNativeZoom: Bool {
+        if #available(iOS 18.0, *) { return true }
+        return false
+    }
+
+}
+
+private extension UINavigationController.Operation {
+    func matches(_ operation: KVTransitionOperation) -> Bool {
+        switch (self, operation) {
+        case (.push, .push), (.pop, .pop):
+            return true
+        default:
+            return false
+        }
+    }
+}

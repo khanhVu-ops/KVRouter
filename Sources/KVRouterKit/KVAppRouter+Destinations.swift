@@ -1,6 +1,6 @@
 //
 //  KVAppRouter+Destinations.swift
-//  KVRouter
+//  KVRouterKit
 //
 //  Default `buildView` / `buildSheet` / `buildFullCover` for ``KVRouterHost``.
 //  Map your app screens via `appFeatureViewBuilder` / `deepLinkViewBuilder`.
@@ -44,5 +44,12 @@ public extension KVAppRouter {
         case .customFullCover(let id):
             buildCustomFullCover(for: id)
         }
+    }
+}
+
+extension KVAppRouter {
+    @ViewBuilder
+    func buildView(for entry: KVNavigationEntry) -> some View {
+        buildView(for: entry.route)
     }
 }

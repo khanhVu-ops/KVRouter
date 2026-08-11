@@ -1,12 +1,12 @@
 //
 //  ContentView.swift
-//  KVRouterExample
+//  KVRouterKitExample
 //
 //  Created by KhanhVu on 18/7/26.
 //
 
 import SwiftUI
-import KVRouter
+import KVRouterKit
 
 struct ContentView: View {
     @Environment(\.router) private var router
@@ -14,6 +14,16 @@ struct ContentView: View {
 
     var body: some View {
         List {
+            Section("Transition gallery") {
+                Button {
+                    router.pushView(transition: .sharedAxis()) {
+                        TransitionGalleryView()
+                    }
+                } label: {
+                    Label("Explore push + pop animations", systemImage: "sparkles.rectangle.stack")
+                }
+            }
+
             Section("Push navigation") {
                 Button("Push typed route — .appFeature(\"profile\")") {
                     router.push(.appFeature("profile"))
@@ -57,7 +67,7 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationTitle("KVRouter Demo")
+        .navigationTitle("KVRouterKit Demo")
     }
 }
 

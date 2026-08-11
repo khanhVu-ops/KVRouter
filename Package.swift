@@ -2,25 +2,37 @@
 import PackageDescription
 
 let package = Package(
-    name: "KVRouter",
+    name: "KVRouterKit",
     platforms: [
         .iOS(.v16)
     ],
     products: [
         .library(
-            name: "KVRouter",
-            targets: ["KVRouter"]
+            name: "KVRouterKit",
+            targets: ["KVRouterKit"]
+        )
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/siteline/swiftui-introspect",
+            .upToNextMajor(from: "26.0.1")
         )
     ],
     targets: [
         .target(
-            name: "KVRouter",
-            path: "Sources/KVRouter"
+            name: "KVRouterKit",
+            dependencies: [
+                .product(
+                    name: "SwiftUIIntrospect",
+                    package: "swiftui-introspect"
+                )
+            ],
+            path: "Sources/KVRouterKit"
         ),
         .testTarget(
-            name: "KVRouterTests",
-            dependencies: ["KVRouter"],
-            path: "Tests/KVRouterTests"
+            name: "KVRouterKitTests",
+            dependencies: ["KVRouterKit"],
+            path: "Tests/KVRouterKitTests"
         )
     ],
     swiftLanguageModes: [.v6]

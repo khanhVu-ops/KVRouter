@@ -1,6 +1,6 @@
 //
 //  ExampleScreens.swift
-//  KVRouterExample
+//  KVRouterKitExample
 //
 //  Screens used by the demo. Navigation is driven entirely through
 //  @Environment(\.router) — on iOS 17+ reads like `router.path.count`
@@ -8,7 +8,117 @@
 //
 
 import SwiftUI
-import KVRouter
+import KVRouterKit
+
+// MARK: - Transition gallery destinations
+
+struct TransitionDemoDetail: View {
+    @Environment(\.router) private var router
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let subtitle: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [tint.opacity(0.22), Color(uiColor: .systemBackground)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 22) {
+                Image(systemName: symbol)
+                    .font(.system(size: 58, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 116, height: 116)
+                    .background(tint.gradient, in: RoundedRectangle(cornerRadius: 34))
+                    .shadow(color: tint.opacity(0.28), radius: 24, y: 14)
+
+                VStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    Text(subtitle)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Text("Swipe from the leading 24-point edge or use the button to preview pop.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+
+                Button("Pop with reverse animation", systemImage: "arrow.backward") {
+                    router.pop()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(tint)
+
+                Button("Pop with system dismiss", systemImage: "chevron.backward") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .tint(tint)
+            }
+            .padding(24)
+        }
+        .navigationTitle(title)
+    }
+}
+
+struct DemoCardDetail: View {
+    @Environment(\.router) private var router
+    @Environment(\.dismiss) private var dismiss
+    let card: DemoCard
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            LinearGradient(
+                colors: card.colors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            Image(systemName: card.symbol)
+                .font(.system(size: 150, weight: .thin))
+                .foregroundStyle(.white.opacity(0.2))
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("HERO ZOOM")
+                    .font(.caption.bold())
+                    .tracking(2.4)
+                Text(card.title)
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                Text(card.subtitle)
+                    .font(.title3)
+                    .foregroundStyle(.white.opacity(0.82))
+
+                Button("Return to gallery", systemImage: "arrow.down.right.and.arrow.up.left") {
+                    router.pop()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.white)
+                .foregroundStyle(card.colors.last ?? .blue)
+                .padding(.top, 10)
+
+                Button("Return with system dismiss", systemImage: "chevron.backward") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(28)
+            .background(.black.opacity(0.12))
+        }
+    }
+}
 
 // MARK: - Detail (pushed dynamically or via deep link)
 

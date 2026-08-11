@@ -1,56 +1,70 @@
-# KVRouter
+# KVRouterKit
 
-Clean, performant, and ergonomic router for SwiftUI — iOS 16+, Swift 6.
+An ergonomic, transition-aware SwiftUI router for iOS 16+ and Swift 6.
 
-- ✅ Type-safe push navigation on top of `NavigationStack`
-- ✅ **Observation-ready**: on iOS 17+ the router behaves like an `@Observable`
-  class (fine-grained, per-property tracking); on iOS 16 it falls back to
-  `ObservableObject` — same API, checked at runtime with `#available`
-- ✅ `@MainActor`-isolated with a FIFO operation queue — rapid navigation calls
-  keep their order even when async middleware takes varying time per route
-- ✅ Compiles in Swift 6 language mode (swift-tools 6.2, strict concurrency)
-- ✅ Dynamic views: `pushView { }`, `presentSheet { }`, `presentFullCover { }`
-- ✅ Pop back to a **specific screen**: `popTo(tag:)`, `popTo(DetailView.self)`,
-  `popTo(.appFeature("profile"))`, `popTo(where:)`
-- ✅ Sheet & full screen cover presentation — sheet → cover transitions wait for
-  the actual dismissal to complete (no hardcoded animation delays)
-- ✅ Async middleware chain (auth guards, logging, redirects, interstitial ads, …)
-- ✅ Deep link handling via `onOpenURL`
-- ✅ Automatic cleanup of dynamic view builders (no leaks on swipe-back / swipe-down)
-- ✅ State restoration support via `restorePath(_:)`
+- Type-safe `NavigationStack` routing and dynamic `pushView` destinations
+- Selectable push/pop transitions with automatic reverse motion
+- Native hero zoom on iOS 18+ and a live-view fallback on iOS 16-17
+- Interactive leading-edge pop for custom transition styles
+- GPU-friendly value-based custom transition DSL
+- FIFO navigation queue, async middleware, deep links and state restoration
+- Sheets and full-screen covers with safe presentation sequencing
+- Reduce Motion, interruption and live hierarchy cleanup
 
 ## Example App
 
-Open `KVRouterExample/KVRouterExample.xcodeproj` for a runnable demo covering
-typed routes, dynamic pushes, FIFO ordering, sheets, full covers, safe
-sheet → cover transitions, an auth-guard middleware, and deep links.
+Open `KVRouterKitExample/KVRouterKitExample.xcodeproj` to run the transition
+gallery and the routing, middleware, modal and deep-link demos.
 
 ## Installation
 
-### Swift Package Manager
+Add KVRouterKit with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/khanhVu-ops/KVRouter.git", from: "1.0.0")
+    .package(
+        url: "https://github.com/khanhVu-ops/KVRouter.git",
+        from: "2.0.0"
+    )
 ]
 ```
 
-Or in Xcode: **File ▸ Add Package Dependencies…** and paste the repo URL.
+Then add the `KVRouterKit` product to your app target.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history and migration notes.
+
+## Migration From KVRouter 1.x
+
+The package, product, target and import name are now `KVRouterKit`:
+
+```swift
+import KVRouterKit
+```
+
+Public router symbols remain unchanged, including `KVAppRouter`,
+`KVRouterHost`, `KVAppRoute` and the middleware protocols. Existing calls that
+do not specify a transition keep their original system-navigation behavior.
 
 ## Quick Start
 
-### 1. Set up the host
+Create one router and install `KVRouterHost` at the root of the app:
 
 ```swift
-import KVRouter
+import KVRouterKit
+import SwiftUI
 
 @main
 struct MyApp: App {
-    @StateObject private var router = KVAppRouter(middlewares: [KVLoggingMiddleware()])
+    @StateObject private var router = KVAppRouter(
+        middlewares: [KVLoggingMiddleware()]
+    )
 
     var body: some Scene {
         WindowGroup {
-            KVRouterHost(router: router) {
+            KVRouterHost(
+                router: router,
+                defaultTransition: .sharedAxis()
+            ) {
                 HomeView()
             }
         }
@@ -58,7 +72,7 @@ struct MyApp: App {
 }
 ```
 
-### 2. Navigate from any view
+Use the environment router from any hosted view:
 
 ```swift
 struct HomeView: View {
@@ -66,25 +80,158 @@ struct HomeView: View {
 
     var body: some View {
         VStack {
-            Button("Push a dynamic view") {
-                router.pushView { DetailView(id: 42) }
+            Button("Open detail") {
+                router.pushView {
+                    DetailView(id: 42)
+                }
             }
-            Button("Present a sheet") {
+
+            Button("Open with depth") {
+                router.pushView(transition: .depth) {
+                    DetailView(id: 43)
+                }
+            }
+
+            Button("Present settings") {
                 router.presentSheet { SettingsView() }
             }
-            Button("Present a full screen cover") {
-                router.presentFullCover { OnboardingView() }
-            }
-            Button("Back") { router.pop() }
-            Button("Back to root") { router.popToRoot() }
         }
     }
 }
 ```
 
-### 3. Typed routes (optional)
+## Navigation Transitions
 
-Map stable feature ids to screens in your app target:
+Set a host default or override it for one navigation operation:
+
+```swift
+KVRouterHost(router: router, defaultTransition: .sharedAxis()) {
+    HomeView()
+}
+
+router.push(.appFeature("profile"), transition: .fade)
+
+router.pushView(transition: .depth) {
+    DetailView(id: 42)
+}
+
+router.replaceTop(with: .appFeature("settings"))
+```
+
+The transition stored with the top entry is automatically reversed by a
+single-screen `pop()`. Replace and bulk path changes stay system-owned so the
+navigation hierarchy remains predictable.
+
+### Built-In Styles
+
+```swift
+.system
+.slide(edge: .trailing)
+.fade
+.scale
+.scaleAndFade
+.sharedAxis(axis: .horizontal)
+.depth
+.reveal(origin: .topTrailing)
+.flip3D(axis: .vertical)
+```
+
+Override the default timing curve on any transition:
+
+```swift
+let transition = KVNavigationTransition.depth
+    .animation(.spring(response: 0.6, dampingFraction: 0.82))
+```
+
+### Hero Zoom
+
+Give the visible source and the pushed transition the same stable ID:
+
+```swift
+Button {
+    router.pushView(transition: .zoom(sourceID: item.id)) {
+        DetailView(item: item)
+    }
+} label: {
+    CardView(item: item)
+}
+.buttonStyle(.plain)
+.kvTransitionSource(id: item.id)
+```
+
+On iOS 18+, KVRouterKit packages SwiftUI's native
+`matchedTransitionSource(id:in:)` and `.navigationTransition(.zoom)` APIs. On
+iOS 16-17, the same call site transforms the live navigation views. If a source
+is no longer visible, navigation falls back to `.scaleAndFade` instead of
+blocking the queue.
+
+### Custom Transitions
+
+Custom transitions describe only compositor-safe endpoint values. KVRouterKit
+compiles them once and lets `UIViewPropertyAnimator` animate the live views:
+
+```swift
+let orbit = KVNavigationTransition.custom(
+    push: KVTransitionStage(
+        incoming: .identity
+            .relativeOffset(y: 0.08)
+            .scale(0.86)
+            .rotation(.degrees(12))
+            .opacity(0),
+        outgoing: .identity
+            .scale(0.97)
+            .rotation(.degrees(-3))
+            .opacity(0.9)
+    ),
+    pop: .mirrored,
+    animation: .spring(response: 0.55, dampingFraction: 0.78),
+    interactiveBack: true
+)
+
+router.pushView(transition: orbit) {
+    DetailView(id: 44)
+}
+```
+
+Set `interactiveBack: false` if a custom transform should only support
+programmatic pop.
+
+### Platform Support
+
+| Requested style | iOS 16-17 | iOS 18+ |
+|---|---|---|
+| `.system` | Native system navigation | Native system navigation |
+| `.zoom` | Custom live-view hero | Native SwiftUI zoom |
+| Other built-ins | KVRouterKit custom engine | KVRouterKit custom engine |
+| `.custom` | KVRouterKit custom engine | KVRouterKit custom engine |
+
+Custom styles support interactive pop from the leading screen edge. System
+and native zoom transitions retain the system navigation gesture. When Reduce
+Motion is enabled, custom motion collapses to a short crossfade; native
+transitions defer to SwiftUI.
+
+### Animation Ownership and Performance
+
+KVRouterKit keeps one live `NavigationStack` hierarchy and animates only
+single-screen push and pop operations:
+
+- `.system` always remains UIKit/SwiftUI-owned.
+- `.zoom` uses Apple's native hero transition on iOS 18+.
+- Custom styles use `UIViewPropertyAnimator` with the existing live controller
+  views; no navigation-screen snapshots are created.
+- Router-driven system and native-zoom operations are scoped so they still
+  animate when newer SwiftUI runtimes reconcile the path with
+  `animated: false` internally.
+- Replace, restoration, bulk stack mutations and navigation controllers not
+  managed by KVRouterKit keep their original system behavior.
+
+Because the original view controllers stay in the navigation hierarchy, local
+SwiftUI state is preserved when popping back. The compatibility layer performs
+only a small policy lookup per navigation mutation and adds no per-frame work.
+
+## Typed Routes
+
+Map stable feature IDs to views in the app target:
 
 ```swift
 router.appFeatureViewBuilder = { id in
@@ -95,128 +242,101 @@ router.appFeatureViewBuilder = { id in
     }
 }
 
-// Then navigate with:
-router.push(.appFeature("profile"))
+router.push(.appFeature("profile"), transition: .sharedAxis())
 ```
+
+## Pop Targets
+
+```swift
+router.pop()
+router.pop(count: 2)
+router.popToRoot()
+router.popTo(.appFeature("profile"))
+router.popTo(tag: "checkout")
+router.popTo(DetailView.self)
+router.popTo(where: { route in /* custom match */ false })
+```
+
+Tag dynamic destinations when they need a stable pop target:
+
+```swift
+router.pushView(tag: "checkout", transition: .depth) {
+    CheckoutView()
+}
+```
+
+Searches run from the top down and exclude the current screen. If no destination
+matches, the router leaves the stack unchanged.
 
 ## Middleware
 
-Middleware can transform, redirect, or cancel navigation:
+Middleware can redirect or cancel navigation and can block router-driven pops:
 
 ```swift
 struct AuthMiddleware: KVRouteMiddleware {
-    func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? {
-        if case .appFeature("profile") = to, !Session.isLoggedIn {
-            return .appFeature("login") // redirect
+    func willNavigate(
+        from: KVAppRoute?,
+        to: KVAppRoute
+    ) async -> KVAppRoute? {
+        if case .appFeature("premium") = to, !Session.isLoggedIn {
+            return .appFeature("login")
         }
         return to
     }
 }
-
-let router = KVAppRouter(middlewares: [AuthMiddleware(), KVLoggingMiddleware()])
 ```
 
-`willPop(from:to:)` and `willDismiss(sheet:fullCover:)` can return `false` to block
-pops and modal dismissals (system swipe gestures cannot be cancelled — middleware
-runs as a side-effect for those).
+`willPop(from:to:)` and `willDismiss(sheet:fullCover:)` return `false` to deny
+their corresponding router operation.
 
 ## Deep Links
 
 ```swift
 router.deepLinkViewBuilder = { payload in
-    // payload example: "profile/123?ref=home"
     guard payload.hasPrefix("profile/") else { return nil }
-    let id = payload.dropFirst("profile/".count)
-    return AnyView(ProfileView(id: String(id)))
+    let id = String(payload.dropFirst("profile/".count))
+    return AnyView(ProfileView(id: id))
 }
 ```
 
-URLs arriving via `onOpenURL` are handled automatically by `KVRouterHost`.
-Unknown payloads are ignored — no navigation happens.
-
-## Pop to a Specific Screen
-
-Typed routes can be targeted directly:
-
-```swift
-router.popTo(.appFeature("profile"))
-router.popTo(where: { route in /* custom condition */ })
-```
-
-Dynamic views (`pushView { }`) have an opaque `.customView(UUID)` route, so
-KVRouter offers two ways to target them:
-
-**By tag** — name the screen when pushing:
-
-```swift
-router.pushView(tag: "checkout") { CheckoutView(cart: cart) }
-// … several screens later:
-router.popTo(tag: "checkout")
-// Also matches typed routes: popTo(tag: "profile") finds .appFeature("profile")
-```
-
-**By view type** — zero configuration, the router records the concrete type at
-push time:
-
-```swift
-router.pushView { DetailView(id: 1) }
-router.pushView { SettingsView() }
-router.pushView { DetailView(id: 2) }
-
-router.popTo(DetailView.self) // → DetailView(id: 2), the nearest one
-```
-
-Both search from the top down and **exclude the current screen** — calling
-`popTo(DetailView.self)` from a `DetailView` pops back to the *previous*
-`DetailView` instance. If nothing below matches, nothing happens. `willPop`
-middleware runs and can cancel, like every other pop.
+URLs delivered through `onOpenURL` are handled automatically by
+`KVRouterHost`. Unknown payloads are ignored.
 
 ## State Restoration
 
-`KVAppRoute` is `Codable`, so the path can be persisted. When restoring, use
-`restorePath(_:)` instead of `setPath(_:)` — it drops `.customView` routes,
-whose view builders live in memory only and cannot be re-created from disk:
+`KVAppRoute` is `Codable`. Restore persisted paths with `restorePath(_:)`:
 
 ```swift
-let decoded = try JSONDecoder().decode([KVAppRoute].self, from: data)
-router.restorePath(decoded)
+let path = try JSONDecoder().decode([KVAppRoute].self, from: data)
+router.restorePath(path)
 ```
 
-## Observation (iOS 17+) vs ObservableObject (iOS 16)
+Dynamic `.customView` routes are in-memory only, so restoration drops custom
+views and uses the host default transition for restored typed routes.
 
-`KVAppRouter` supports both observation systems at once, selected at runtime:
+## Observation and Concurrency
 
-- **iOS 17+** — the router conforms to `Observable` and reports property
-  access/mutation through an `ObservationRegistrar`, exactly like the
-  `@Observable` macro. Views that read `router.path` / `router.sheet` /
-  `router.fullCover` directly (e.g. via `@Environment(\.router)`) re-render
-  only when the property they actually read changes.
-- **iOS 16** — falls back to `ObservableObject` (`objectWillChange`), so
-  `@StateObject` / `@ObservedObject` keep working.
+- iOS 17+: `KVAppRouter` participates in fine-grained Observation tracking.
+- iOS 16: the same API falls back to `ObservableObject`.
+- Router and middleware APIs are `@MainActor` isolated.
+- Navigation operations use a FIFO queue, including rapid calls around async
+  middleware.
 
-No configuration needed — the check is `if #available(iOS 17.0, *)` inside.
+## Requirements
 
-## Threading & Swift 6
-
-`KVAppRouter` is `@MainActor` and the package compiles in Swift 6 language
-mode. Call the router from views and other main-actor code directly; from
-background code, hop first: `await MainActor.run { router.push(...) }`.
-`KVRouteMiddleware` is `@MainActor` too — offload heavy work inside a
-middleware with a background `Task` if needed.
-
-## Requirements (package)
-
-- iOS 16.0+ (Observation fast path on iOS 17+)
-- Swift 6.2 toolchain (Xcode 26+) to build; Swift 6 language mode
+- iOS 16.0+
+- Swift 6.2 toolchain / Xcode 26+
+- Swift 6 language mode for the package
 
 ## API Overview
 
-| Operation | Methods |
+| Area | Primary APIs |
 |---|---|
-| Push | `push(_:)`, `pushView(tag:_:)`, `replaceTop(with:)`, `replaceTopWithView(tag:_:)`, `setPath(_:)` |
-| Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popTo(where:)`, `popToRoot()` |
-| Sheet | `present(_:)`, `presentSheet(_:)`, `dismissSheet()`, `dismissSheet(afterDismiss:)` |
-| Full cover | `presentFull(_:)`, `presentFullCover(_:)`, `dismissFull()`, `dismissSheetThenPresentFull(_:)` |
+| Push | `push(_:transition:)`, `pushView(tag:transition:_:)` |
+| Path changes | `replaceTop`, `setPath`, `restorePath` |
+| Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
+| Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
+| Modal | `presentSheet`, `dismissSheet`, `presentFullCover`, `dismissFull` |
 | Deep link | `handle(url:)` |
 
 ## License

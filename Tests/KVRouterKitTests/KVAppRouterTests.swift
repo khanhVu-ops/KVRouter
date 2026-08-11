@@ -1,11 +1,11 @@
 //
 //  KVAppRouterTests.swift
-//  KVRouter
+//  KVRouterKit
 //
 
 import XCTest
 import SwiftUI
-@testable import KVRouter
+@testable import KVRouterKit
 
 @MainActor
 final class KVAppRouterTests: XCTestCase {
