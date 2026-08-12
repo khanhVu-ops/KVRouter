@@ -15,7 +15,7 @@ jobs:
     name: Test
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The package needs Swift tools 6.2 / Swift 6 language mode, so pick the
       # newest Xcode on the image rather than whatever is selected by default.
@@ -68,7 +68,7 @@ jobs:
     name: Build example app
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select newest Xcode
         run: |
