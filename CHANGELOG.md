@@ -40,6 +40,8 @@ migration guide, because effectively nobody depends on 2.x yet.
   transition overloads).
 - `KVAppRouter.settle()`: await the FIFO queue instead of polling.
 - `KVAppRouter.middlewareTimeout`, so a hung middleware cannot wedge navigation.
+- `handlePathChange` identifies removed entries by id rather than assuming a
+  trailing truncation, which an animated replace violates by design.
 - `KVPathCodec`: persists and restores a stack of mixed route types, keyed on
   `KVRestorableRoute.restorationID`. Anything that cannot be carried across
   truncates the stack at that point rather than leaving a hole in it.
@@ -55,9 +57,12 @@ migration guide, because effectively nobody depends on 2.x yet.
 - The middleware chain had no watchdog, so one `await` that never returned
   wedged the operation queue for the rest of the process.
 - `replaceTop(with:transition:)` recorded the transition but never played it;
-  the argument only took effect when that entry was later popped. The overload is
-  removed rather than repaired: SwiftUI does not give UIKit a single matching
-  stack operation for a replace, so the delegate is never asked for an animator.
+  the argument only took effect when that entry was later popped. There is no
+  UIKit replace operation to drive -- confirmed by probing a real
+  UINavigationController and by watching a deliberately two-second transition not
+  play -- so the overload is rebuilt as a push followed by dropping the screen
+  underneath once the animation finishes. It animates; the trade is that the
+  stack is one entry deeper for the duration.
 - A native-zoom dismiss left the source view hidden, holding an empty slot in
   the layout. The push needs `animated: true` forced onto UIKit, but the pop does
   not: SwiftUI drives the zoom dismissal itself and passes `animated: false` on

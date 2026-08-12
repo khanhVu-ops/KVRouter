@@ -139,8 +139,12 @@ struct DetailView: View {
                 Button("Push another detail") {
                     router.pushView { DetailView(number: number + 1) }
                 }
-                Button("Replace top with profile") {
-                    // Replace is not animated: see the note on `replaceTop`.
+                Button("Replace top with profile (animated)") {
+                    // Deliberately the most unmistakable transition in the set,
+                    // so it is obvious whether an animated replace works at all.
+                    router.replaceTop(with: AppRoute.profile, transition: .flip3D())
+                }
+                Button("Replace top with profile (no animation)") {
                     router.replaceTop(with: AppRoute.profile)
                 }
             }

@@ -143,11 +143,16 @@ router.replaceTop(with: ShopRoute.settings)
 ```
 
 The transition stored with the top entry is automatically reversed by a
-single-screen `pop()`. Replace and bulk path changes are not animated and take no
-`transition:` argument: the custom animator hangs off
-`UINavigationControllerDelegate`, and SwiftUI does not hand UIKit a single
-matching stack operation for either. 2.x accepted a `transition:` on `replaceTop`
-and silently ignored it.
+single-screen `pop()`. Bulk path changes are not animated: SwiftUI does not hand
+UIKit a single matching stack operation for them.
+
+`replaceTop(with:transition:)` is animated, but by construction rather than by a
+UIKit replace operation — which does not exist. It pushes the new screen with the
+transition, then drops the screen underneath once the animation finishes, while
+it is covered. The cost: for the duration of the transition the stack is one
+entry deeper than the result, so `stackDepth` reads one higher and a back swipe
+landing in that window returns to the replaced screen. Use `replaceTop(with:)`
+when that matters more than the motion does.
 
 ### Built-In Styles
 
@@ -444,7 +449,7 @@ nothing.
 | Area | Primary APIs |
 |---|---|
 | Push | `push(_:transition:)`, `pushView(tag:transition:_:)` |
-| Path changes | `replaceTop`, `setPath` (not animated — see below) |
+| Path changes | `replaceTop(with:)`, `replaceTop(with:transition:)`, `setPath` |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |

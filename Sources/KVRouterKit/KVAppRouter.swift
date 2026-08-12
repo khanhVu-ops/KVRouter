@@ -252,14 +252,19 @@ public final class KVAppRouter: ObservableObject {
     ) {
         guard newEntries.count < oldEntries.count else { return }
 
-        let removed = Array(oldEntries.suffix(from: newEntries.count))
+        // By id, not by `suffix(from:)`: an animated replace drops the entry
+        // *below* the new top, so removals are not always trailing.
+        let survivingIDs = Set(newEntries.map(\.id))
+        let removed = oldEntries.enumerated()
+            .filter { !survivingIDs.contains($0.element.id) }
+
         // Claim the router-driven ones here, whether or not any survive: leaving
         // ids behind is what let the old flag leak into a later pop.
-        let routerDriven = Set(removed.map(\.id)).intersection(routerRemovedEntryIDs)
+        let routerDriven = Set(removed.map(\.element.id))
+            .intersection(routerRemovedEntryIDs)
         routerRemovedEntryIDs.subtract(routerDriven)
 
-        let systemRemoved = removed.enumerated()
-            .filter { !routerDriven.contains($0.element.id) }
+        let systemRemoved = removed.filter { !routerDriven.contains($0.element.id) }
         guard !systemRemoved.isEmpty else { return }
 
         // Through the queue, sequentially, top screen first. Firing one detached
@@ -267,8 +272,7 @@ public final class KVAppRouter: ObservableObject {
         // with queued operations — the one thing the queue exists to prevent.
         enqueue { [weak self] in
             guard let self else { return }
-            for (offset, entry) in systemRemoved.reversed() {
-                let index = newEntries.count + offset
+            for (index, entry) in systemRemoved.reversed() {
                 let destination = index > 0 ? oldEntries[index - 1] : nil
                 await self.applyPopMiddlewares(
                     from: entry.route.base,
@@ -494,13 +498,60 @@ extension KVAppRouter {
         replaceTop(with: route, transition: nil)
     }
 
-    // No `transition:` overload on purpose. A replace cannot be animated: the
-    // custom animator hangs off UINavigationControllerDelegate, and SwiftUI does
-    // not hand UIKit a same-depth stack mutation for a changed top entry, so the
-    // delegate is never asked. (UIKit itself would cooperate — a same-depth
-    // `setViewControllers` is reported as `.push` — SwiftUI is the blocker.)
-    // 2.x accepted a `transition:` here and silently ignored it, which is worse
-    // than not offering it.
+    /// Replace the top route, animating the change with `transition`.
+    ///
+    /// A replace has no UIKit operation of its own to animate — SwiftUI never
+    /// hands UIKit a single same-depth stack mutation, so the custom animator is
+    /// never asked for one. This runs it as two steps instead: push the new
+    /// screen with the transition, then drop the screen underneath once the
+    /// animation has finished, while it is off-screen and covered.
+    ///
+    /// - Important: For the duration of the transition the stack is one entry
+    ///   deeper than the result, so ``stackDepth`` reads one higher and a back
+    ///   swipe landing in that window returns to the replaced screen rather than
+    ///   past it. Use ``replaceTop(with:)`` when that matters more than motion.
+    public func replaceTop(
+        with route: any KVRoute,
+        transition: KVNavigationTransition
+    ) {
+        enqueue { [weak self] in
+            guard let self else { return }
+            guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
+            let entry = self.makeEntry(route: finalRoute, transition: transition)
+
+            guard let outgoing = self.navigationEntries.last else {
+                // Nothing underneath to drop: this is just a push.
+                await self.performNavigation(
+                    KVTransitionRequest(
+                        operation: .push,
+                        from: nil,
+                        to: entry,
+                        transitionOverride: transition
+                    )
+                ) { self.navigationEntries.append(entry) }
+                return
+            }
+
+            await self.performNavigation(
+                KVTransitionRequest(
+                    operation: .push,
+                    from: outgoing,
+                    to: entry,
+                    transitionOverride: transition
+                )
+            ) { self.navigationEntries.append(entry) }
+
+            // The animation is done and `outgoing` is covered, so removing it is
+            // invisible. Its pop middleware must not run: it was replaced, not
+            // popped back to.
+            self.markRouterRemoved(outgoing)
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                self.navigationEntries.removeAll { $0.id == outgoing.id }
+            }
+        }
+    }
 
     private func replaceTop(
         with route: any KVRoute,

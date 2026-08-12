@@ -31,8 +31,10 @@ public protocol KVViewRouting: KVRouting {
 
     func replaceTopWithView<V: View>(tag: String?, _ build: @escaping () -> V)
 
-    // No `transition:` on the replace commands: a replace cannot be animated.
-    // See the note on `KVAppRouter.replaceTop(with:)`.
+    /// Animated replace. Runs as a push followed by dropping the screen
+    /// underneath — see the note on `KVAppRouter.replaceTop(with:transition:)`
+    /// for what that costs.
+    func replaceTop(with route: any KVRoute, transition: KVNavigationTransition)
 
     /// Pop back to the nearest screen below pushed with this tag.
     ///
