@@ -62,7 +62,11 @@ migration guide, because effectively nobody depends on 2.x yet.
   UINavigationController and by watching a deliberately two-second transition not
   play -- so the overload is rebuilt as a push followed by dropping the screen
   underneath once the animation finishes. It animates; the trade is that the
-  stack is one entry deeper for the duration.
+  stack is one entry deeper for the duration. The transition applies to the
+  replace only: the new entry inherits the pop transition of the screen it
+  replaced, and the drop is applied as a silent stack edit that no animator will
+  claim. Both were needed -- storing the replace transition on the new entry made
+  it play twice and made going back play it in reverse.
 - A native-zoom dismiss left the source view hidden, holding an empty slot in
   the layout. The push needs `animated: true` forced onto UIKit, but the pop does
   not: SwiftUI drives the zoom dismissal itself and passes `animated: false` on

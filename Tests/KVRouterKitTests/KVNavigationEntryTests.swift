@@ -4,6 +4,7 @@ import KVRouterCore
 
 private final class RecordingDriver: KVTransitionDriving {
     var requests: [KVTransitionRequest] = []
+    var silentEditCount = 0
 
     func perform(
         _ request: KVTransitionRequest,
@@ -11,6 +12,11 @@ private final class RecordingDriver: KVTransitionDriving {
     ) async {
         requests.append(request)
         mutation()
+    }
+
+    func performSilently(_ edit: @MainActor () -> Void) {
+        silentEditCount += 1
+        edit()
     }
 }
 
@@ -135,6 +141,61 @@ final class KVNavigationEntryTests: XCTestCase {
 
         XCTAssertTrue(driver.requests.isEmpty)
         XCTAssertEqual(router.path, [.screen("a"), .screen("c")])
+    }
+
+    // MARK: - Animated replace
+
+    /// The animated replace is a push plus a drop. Exactly one animated request
+    /// may reach the driver: the reported symptom was the transition playing
+    /// twice, because the drop picked up an animator of its own.
+    func testAnimatedReplaceAnimatesOnceAndDropsSilently() async {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b")]
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
+        router.replaceTop(with: TestRoute.screen("c"), transition: .flip3D())
+        await waitUntil { router.path == [.screen("a"), .screen("c")] }
+
+        XCTAssertEqual(driver.requests.count, 1, "The drop must not be animated")
+        XCTAssertEqual(driver.requests.first?.operation, .push)
+        XCTAssertEqual(driver.requests.first?.transitionOverride?.debugKind, .flip3D)
+        XCTAssertEqual(driver.silentEditCount, 1)
+        XCTAssertEqual(router.stackDepth, 2)
+    }
+
+    /// Going back from the replacing screen should look like going back from what
+    /// it replaced — not like the replace animation running in reverse.
+    func testAnimatedReplaceInheritsThePopTransitionItReplaced() async {
+        let router = KVAppRouter()
+        router.push(TestRoute.screen("a"), transition: .sharedAxis())
+        await waitUntil { router.stackDepth == 1 }
+        let replaced = router.navigationEntries[0]
+        XCTAssertEqual(router.transitionOverride(for: replaced)?.debugKind, .sharedAxis)
+
+        router.replaceTop(with: TestRoute.screen("b"), transition: .flip3D())
+        await waitUntil { router.path == [.screen("b")] }
+
+        let replacement = router.navigationEntries[0]
+        XCTAssertEqual(
+            router.transitionOverride(for: replacement)?.debugKind,
+            .sharedAxis,
+            "The replacement must pop with the transition of the screen it replaced"
+        )
+    }
+
+    /// Replacing the only screen has nothing to inherit from, so the transition
+    /// is genuinely that screen's own.
+    func testAnimatedReplaceOnEmptyStackKeepsItsOwnTransition() async {
+        let router = KVAppRouter()
+
+        router.replaceTop(with: TestRoute.screen("a"), transition: .flip3D())
+        await waitUntil { router.stackDepth == 1 }
+
+        XCTAssertEqual(
+            router.transitionOverride(for: router.navigationEntries[0])?.debugKind,
+            .flip3D
+        )
     }
 
     /// A bulk pop still bypasses the driver: only single-screen changes have a

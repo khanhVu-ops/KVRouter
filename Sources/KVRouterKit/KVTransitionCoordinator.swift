@@ -76,6 +76,15 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     private var nativeZoomEntryIDs: Set<UUID> = []
     private var navigationAnimationIntent: KVNavigationAnimationIntent?
     private var navigationAnimationIntentExpiry: Task<Void, Never>?
+
+    /// Non-nil while a silent stack edit is in flight.
+    ///
+    /// A window rather than a synchronous scope: SwiftUI applies the path change
+    /// and UIKit asks whether to animate it well after `performSilently` returns.
+    private var silentEditToken: UUID?
+    private var silentEditExpiry: Task<Void, Never>?
+
+    private var isSilentEditing: Bool { silentEditToken != nil }
     // SwiftUI may remove the route before UIKit asks for its pop animator.
     private var controllerMetadata: [
         ObjectIdentifier: KVControllerTransitionMetadata
@@ -106,6 +115,9 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     }
 
     func detach() {
+        silentEditExpiry?.cancel()
+        silentEditExpiry = nil
+        silentEditToken = nil
         bridge?.detach()
         bridge = nil
         isBridgeAttached = false
@@ -221,9 +233,26 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         }
     }
 
+    func performSilently(_ edit: @MainActor () -> Void) {
+        let token = UUID()
+        silentEditToken = token
+        clearNavigationAnimationIntent()
+        silentEditExpiry?.cancel()
+        silentEditExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.5))
+            guard self?.silentEditToken == token else { return }
+            self?.silentEditToken = nil
+        }
+
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, edit)
+    }
+
     func animator(
         for operation: UINavigationController.Operation
     ) -> KVViewControllerTransitionAnimator? {
+        guard !isSilentEditing else { return nil }
         guard let transaction = pendingTransaction,
               operation.matches(transaction.request.operation) else {
             return nil
@@ -251,6 +280,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         from fromViewController: UIViewController,
         to _: UIViewController
     ) -> KVViewControllerTransitionAnimator? {
+        guard !isSilentEditing else { return nil }
         if let animator = animator(for: operation) {
             return animator
         }
@@ -280,6 +310,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         from fromViewController: UIViewController?,
         to _: UIViewController?
     ) -> Bool {
+        guard !isSilentEditing else { return false }
         if let intent = navigationAnimationIntent,
            operation.matches(intent.request.operation) {
             navigationAnimationIntent = nil

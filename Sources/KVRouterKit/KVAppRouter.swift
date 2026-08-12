@@ -292,6 +292,26 @@ public final class KVAppRouter: ObservableObject {
         navigationEntries = Array(prefix) + suffix
     }
 
+    /// Records the transition a screen pops back with.
+    func setTransitionOverride(
+        _ transition: KVNavigationTransition?,
+        for entry: KVNavigationEntry
+    ) {
+        transitionOverrides[entry.id] = transition
+    }
+
+    /// Applies a stack change the user must not see, through the driver so the
+    /// UIKit side declines to animate it too.
+    private func performSilentStackEdit(_ edit: @MainActor () -> Void) {
+        if let transitionDriver {
+            transitionDriver.performSilently(edit)
+        } else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction, edit)
+        }
+    }
+
     private func makeEntry(
         route: any KVRoute,
         transition: KVNavigationTransition?
@@ -517,10 +537,12 @@ extension KVAppRouter {
         enqueue { [weak self] in
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
-            let entry = self.makeEntry(route: finalRoute, transition: transition)
+            let entry = KVNavigationEntry(route: finalRoute)
 
             guard let outgoing = self.navigationEntries.last else {
-                // Nothing underneath to drop: this is just a push.
+                // Nothing underneath to drop: this is just a push, and the
+                // transition belongs to the new screen for real.
+                self.setTransitionOverride(transition, for: entry)
                 await self.performNavigation(
                     KVTransitionRequest(
                         operation: .push,
@@ -532,6 +554,16 @@ extension KVAppRouter {
                 return
             }
 
+            // The new screen takes the replaced screen's place in the stack, so
+            // it inherits its pop transition. Storing the replace transition here
+            // instead made going back play the replace animation in reverse, and
+            // made the drop below pick up an animator of its own — the same
+            // transition running a second time.
+            self.setTransitionOverride(
+                self.transitionOverride(for: outgoing),
+                for: entry
+            )
+
             await self.performNavigation(
                 KVTransitionRequest(
                     operation: .push,
@@ -542,12 +574,10 @@ extension KVAppRouter {
             ) { self.navigationEntries.append(entry) }
 
             // The animation is done and `outgoing` is covered, so removing it is
-            // invisible. Its pop middleware must not run: it was replaced, not
-            // popped back to.
+            // invisible — provided nothing animates it. Its pop middleware must
+            // not run either: it was replaced, not popped back to.
             self.markRouterRemoved(outgoing)
-            var transaction = Transaction(animation: nil)
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
+            self.performSilentStackEdit {
                 self.navigationEntries.removeAll { $0.id == outgoing.id }
             }
         }

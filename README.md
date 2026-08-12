@@ -146,13 +146,25 @@ The transition stored with the top entry is automatically reversed by a
 single-screen `pop()`. Bulk path changes are not animated: SwiftUI does not hand
 UIKit a single matching stack operation for them.
 
-`replaceTop(with:transition:)` is animated, but by construction rather than by a
-UIKit replace operation — which does not exist. It pushes the new screen with the
-transition, then drops the screen underneath once the animation finishes, while
-it is covered. The cost: for the duration of the transition the stack is one
-entry deeper than the result, so `stackDepth` reads one higher and a back swipe
-landing in that window returns to the replaced screen. Use `replaceTop(with:)`
-when that matters more than the motion does.
+Replacing the top screen comes in two flavours:
+
+```swift
+router.replaceTop(with: SettingsRoute.root)                        // instant
+router.replaceTop(with: SettingsRoute.root, transition: .flip3D()) // animated
+```
+
+The animated one is built rather than native — UIKit has no replace operation to
+drive. It pushes the new screen with the transition, then drops the screen
+underneath once the animation finishes, while it is covered.
+
+Two consequences worth knowing:
+
+- **The transition applies to the replace only.** The new screen inherits the pop
+  transition of the screen it replaced, so going back from it looks the way going
+  back from that screen did — not like the replace animation in reverse.
+- **The stack is one entry deeper for the duration.** `stackDepth` reads one
+  higher, and a back swipe landing inside that window returns to the replaced
+  screen. Use the instant form when that matters more than the motion does.
 
 ### Built-In Styles
 
