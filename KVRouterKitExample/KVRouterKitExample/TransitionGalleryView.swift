@@ -203,9 +203,14 @@ struct TransitionGalleryView: View {
                         }
                     } label: {
                         heroCard(card)
+                            .kvTransitionSource(id: card.id)
+                            .shadow(
+                                color: card.colors.last?.opacity(0.24) ?? .clear,
+                                radius: 16,
+                                y: 10
+                            )
                     }
                     .buttonStyle(.plain)
-                    .kvTransitionSource(id: card.id)
                     .accessibilityLabel("Open \(card.title) hero zoom demo")
                 }
             }
@@ -339,7 +344,6 @@ struct TransitionGalleryView: View {
         }
         .frame(height: 178)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: card.colors.last?.opacity(0.24) ?? .clear, radius: 16, y: 10)
     }
 
     private func transitionRow(_ option: TransitionOption) -> some View {

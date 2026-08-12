@@ -154,10 +154,15 @@ Button {
     }
 } label: {
     CardView(item: item)
+        .kvTransitionSource(id: item.id)
+        .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
 }
 .buttonStyle(.plain)
-.kvTransitionSource(id: item.id)
 ```
+
+Apply external effects such as shadows after `kvTransitionSource`. This keeps
+them outside the native zoom snapshot and avoids stretched shadow artifacts
+during the reverse transition.
 
 On iOS 18+, KVRouterKit packages SwiftUI's native
 `matchedTransitionSource(id:in:)` and `.navigationTransition(.zoom)` APIs. On
