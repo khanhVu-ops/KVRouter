@@ -355,6 +355,15 @@ ProductListViewModel(router: router).didTapProduct(42)
 View code that needs `pushView { }` or a per-navigation transition takes
 `any KVViewRouting` instead — the same port plus the view-layer commands.
 
+A ViewModel can also ask where it is, via `stackDepth` and `topRoute`:
+
+```swift
+var canGoBack: Bool { router.stackDepth > 0 }
+```
+
+Both are snapshots, not observable properties. Reading them from a ViewModel is
+fine; driving a SwiftUI `body` from them is not — see Observation below.
+
 ## Pop Targets
 
 ```swift
@@ -397,6 +406,11 @@ struct AuthMiddleware: KVRouteMiddleware {
 ```
 
 `willPop(from:to:)` returns `false` to deny the pop.
+
+Middleware is `async`, so a chain that never returns would stall every later
+navigation. It is raced against `router.middlewareTimeout` (5 seconds by default):
+past that the operation is abandoned — a hung `willNavigate` reads as a denial, a
+hung `willPop` as consent — and debug builds trip an assertion.
 
 ## Deep Links
 
