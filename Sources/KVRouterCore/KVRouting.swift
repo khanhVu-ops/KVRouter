@@ -51,6 +51,14 @@ public protocol KVRouting: AnyObject, Sendable {
     /// - Important: A snapshot, not an observable property.
     var topRoute: (any KVRoute)? { get }
 
+    /// The whole stack above the root, oldest first.
+    ///
+    /// Needed to persist a stack — `KVPathCodec.encode(_:)` takes exactly this —
+    /// which `stackDepth` and `topRoute` cannot express between them.
+    ///
+    /// - Important: A snapshot, not an observable property.
+    var routes: [any KVRoute] { get }
+
     // MARK: - Push
 
     /// Push a route onto the navigation stack.

@@ -127,6 +127,7 @@ struct DemoCardDetail: View {
 
 struct DetailView: View {
     @Environment(\.router) private var router
+    @ObservedObject private var savedStack = SavedStack.shared
     let number: Int
 
     var body: some View {
@@ -146,6 +147,21 @@ struct DetailView: View {
                 }
                 Button("Replace top with profile (no animation)") {
                     router.replaceTop(with: AppRoute.profile)
+                }
+            }
+
+            Section("Save / restore stack") {
+                Button("Save this stack (\(router.stackDepth) screens)") {
+                    savedStack.save(router.routes)
+                }
+                if let outcome = savedStack.lastOutcome {
+                    Text(
+                        outcome.wasTruncated
+                            ? "Saved \(outcome.persisted) of \(outcome.live) — pushView screens cannot come back, so the stack is cut there."
+                            : "Saved all \(outcome.persisted). Restore it from the root screen."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(outcome.wasTruncated ? .orange : .secondary)
                 }
             }
 

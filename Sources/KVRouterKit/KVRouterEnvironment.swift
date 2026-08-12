@@ -39,6 +39,7 @@ final class KVNullRouter: KVViewRouting {
 
     var stackDepth: Int { 0 }
     var topRoute: (any KVRoute)? { nil }
+    var routes: [any KVRoute] { [] }
 
     func push(_ route: any KVRoute) { reportMissingHost("push(\(route))") }
     func replaceTop(with route: any KVRoute) { reportMissingHost("replaceTop") }

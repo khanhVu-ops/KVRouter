@@ -2,6 +2,18 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## Unreleased
+
+### Added
+
+- `KVRouting.routes`: the whole stack as a snapshot. `stackDepth` and `topRoute`
+  cannot express a stack between them, so persisting one was impossible through
+  the port — `KVPathCodec.encode(_:)` takes exactly this. Adding a requirement to
+  a protocol breaks anyone conforming to it themselves, so this is not a patch
+  release.
+- The example app demonstrates save and restore, and reports how many screens
+  survived so the truncation rule is visible rather than only documented.
+
 ## 3.0.0 - 2026-08-12
 
 3.0 is a clean break: there is no compatibility shim and no migration guide,
@@ -129,6 +141,8 @@ because effectively nobody depended on 2.x yet.
   `@Observable` semantics on iOS 17+, `ObservableObject` on iOS 16.
 - The fallback is asymmetric — `@Environment` does not observe an
   `ObservableObject` — so send commands rather than rendering from stack state.
+
+[Full release notes](docs/releases/3.0.0.md)
 
 ## 2.0.0 - 2026-08-12
 

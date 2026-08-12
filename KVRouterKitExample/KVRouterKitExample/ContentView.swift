@@ -12,6 +12,7 @@ import KVRouterKit
 struct ContentView: View {
     @Environment(\.router) private var router
     @ObservedObject private var session = Session.shared
+    @ObservedObject private var savedStack = SavedStack.shared
 
     // Modals are the app's own state now — KVRouterKit manages the navigation
     // stack only, and SwiftUI already models presentation declaratively.
@@ -63,6 +64,43 @@ struct ContentView: View {
                 Toggle("Logged in", isOn: $session.isLoggedIn)
                 Button("Push premium (redirects to login when logged out)") {
                     router.push(AppRoute.premium)
+                }
+            }
+
+            Section("Save / restore stack") {
+                if let saved = savedStack.savedCount {
+                    Button("Restore \(saved) screen\(saved == 1 ? "" : "s")") {
+                        if let routes = try? savedStack.restorableRoutes() {
+                            router.setPath(routes)
+                        }
+                    }
+                    .disabled(saved == 0)
+
+                    Button("Forget saved stack", role: .destructive) {
+                        savedStack.clear()
+                    }
+                } else {
+                    Text("Nothing saved yet — push some screens, then use \"Save this stack\" there.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let outcome = savedStack.lastOutcome {
+                    if outcome.wasTruncated {
+                        Text(
+                            """
+                            Saved \(outcome.persisted) of \(outcome.live) screens. A stack is a \
+                            path, so anything that cannot be rebuilt — a pushView { } screen — \
+                            truncates it there rather than leaving a hole in it.
+                            """
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    } else {
+                        Text("All \(outcome.persisted) screens survived, relaunch included.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 

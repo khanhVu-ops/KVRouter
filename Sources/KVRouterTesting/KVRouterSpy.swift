@@ -75,6 +75,8 @@ public final class KVRouterSpy: KVRouting {
 
     public var topRoute: (any KVRoute)? { stack.last?.base }
 
+    public var routes: [any KVRoute] { stack.map(\.base) }
+
     public func push(_ route: any KVRoute) {
         operations.append(.push(AnyKVRoute(route)))
         stack.append(AnyKVRoute(route))
