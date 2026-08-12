@@ -266,7 +266,13 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         _ = window
     }
 
-    func testSystemInitiatedNativeZoomPopForcesUIKitAnimation() async throws {
+    /// The swipe-to-dismiss repro. A gesture dismissal never reaches `perform`,
+    /// so it lands on the outgoing-controller metadata branch — which forced
+    /// `animated: true` onto every pop it recognised, native zoom included. That
+    /// second, concurrent UIKit transition is what leaves SwiftUI's
+    /// `matchedTransitionSource` hidden: the source keeps its slot in the grid
+    /// and renders nothing.
+    func testSystemInitiatedNativeZoomPopDoesNotForceUIKitAnimation() async throws {
         guard #available(iOS 18.0, *) else {
             throw XCTSkip("Native navigation zoom requires iOS 18 or newer")
         }
@@ -286,6 +292,9 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [entry]
+        // What `pushView(transition:)` records, and what
+        // `synchronizeControllerMetadata` reads back to resolve the pop.
+        router.setTransitionOverride(.zoom(sourceID: "card"), for: entry)
 
         await coordinator.perform(
             KVTransitionRequest(
@@ -309,8 +318,51 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         )
         await waitUntil { original.lastWillShowAnimated != nil }
 
-        XCTAssertEqual(original.lastWillShowAnimated, true)
+        XCTAssertEqual(
+            original.lastWillShowAnimated,
+            false,
+            "A native-zoom pop UIKit reaches on its own must keep SwiftUI's animated: false"
+        )
         XCTAssertNil(coordinator.pendingTransaction)
+        _ = window
+    }
+
+    /// The companion to the test above: with the same wiring but a custom
+    /// transition, the metadata branch must still force — that branch exists so
+    /// a gesture or `@Environment(\.dismiss)` pop gets our animator.
+    func testSystemInitiatedZoomPopWithoutNativeSupportStillForces() async {
+        let router = KVAppRouter()
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        // The entry was never pushed through the native-zoom path, so its pop
+        // resolves onto the custom backend — our animator, which needs forcing.
+        coordinator.hasSource = { _ in false }
+        let root = UIViewController()
+        let detail = UIViewController()
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
+        let navigationController = UINavigationController(
+            rootViewController: root
+        )
+        navigationController.setViewControllers(
+            [root, detail],
+            animated: false
+        )
+        router.navigationEntries = [entry]
+        router.setTransitionOverride(.zoom(sourceID: "card"), for: entry)
+
+        let original = RecordingNavigationDelegate()
+        navigationController.delegate = original
+        let window = makeVisibleWindow(rootViewController: navigationController)
+        coordinator.attach(to: navigationController)
+        original.reset()
+
+        navigationController.setViewControllers(
+            [root],
+            animated: false
+        )
+        await waitUntil { original.lastWillShowAnimated != nil }
+
+        XCTAssertEqual(original.lastWillShowAnimated, true)
         _ = window
     }
 

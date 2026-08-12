@@ -2,6 +2,29 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Animation forcing no longer applies to a native-zoom pop the router did not
+  drive. 3.0 removed the forcing from the router-driven path, on the reasoning
+  that a second, concurrent UIKit transition is what stops SwiftUI un-hiding the
+  `matchedTransitionSource` and leaves the zoom source holding an empty slot in
+  the layout. A dismissal the router never sees — a gesture, the back button,
+  `@Environment(\.dismiss)` — resolves through the outgoing-controller metadata
+  instead, and that branch still forced every pop it recognised, native zoom
+  included. It now honours the resolved backend, matching the animator handed
+  back for the same pop, which has always declined native zoom.
+
+### Known Gaps
+
+- The forcing fix above is reasoned from the code, not from a reproduction: the
+  reported swipe-to-dismiss failure does not reproduce in the example app on the
+  iOS 26.2 simulator, either before or after it. Instrumenting the swizzle there
+  shows the swipe arriving as `popViewController(animated: true)`, so the forcing
+  is never consulted on that path and the branch above is not what that app hits.
+  A repro that shows the source hidden is still needed to close this out.
+
 ## 3.1.0 - 2026-08-12
 
 ### Added

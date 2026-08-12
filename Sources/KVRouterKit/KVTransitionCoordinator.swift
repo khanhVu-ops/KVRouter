@@ -330,7 +330,18 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
               metadata.controller === fromViewController else {
             return false
         }
-        return true
+        // The same rule the router-driven pop follows in `perform`, applied to
+        // the pops the router never sees: a swipe dismiss, the back button,
+        // `@Environment(\.dismiss)`. This branch is only consulted when SwiftUI
+        // hands UIKit `animated: false`, which for a native-zoom dismissal is
+        // deliberate — SwiftUI drives that animation itself. Forcing it to true
+        // starts a second, concurrent UIKit transition, and SwiftUI never
+        // un-hides the `matchedTransitionSource`: the source view keeps its slot
+        // in the layout and renders nothing.
+        //
+        // It matches the animator handed back for the same pop just above,
+        // which has always declined native zoom.
+        return metadata.resolved.backend != .nativeZoom
     }
 
     func synchronizeControllerMetadata(
