@@ -23,8 +23,11 @@ import SwiftUI
 /// 1. Add a new case to this enum
 /// 2. Update `KVAppRouter+Destinations.buildView(for:)` (or your app’s replacement) for the new case
 ///
-/// - Note: Hashable + Codable for persistence and fast diffs.
-public enum KVAppRoute: Hashable, Codable {
+/// - Note: Hashable + Codable for persistence and fast diffs. `Sendable` is
+///   declared here rather than alongside the `KVRoute` conformance in
+///   `KVAppRouter+KVRouting.swift`, because Swift requires `Sendable` to be
+///   stated in the same file as the type.
+public enum KVAppRoute: Hashable, Codable, Sendable {
 
     // MARK: - Dynamic Routes
     /// Generic slot for views built dynamically at runtime.

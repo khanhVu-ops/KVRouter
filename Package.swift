@@ -7,9 +7,21 @@ let package = Package(
         .iOS(.v16)
     ],
     products: [
+        // The router plus its SwiftUI host. What an app target imports.
         .library(
             name: "KVRouterKit",
             targets: ["KVRouterKit"]
+        ),
+        // Route model and the `KVRouting` command port — no SwiftUI, no UIKit.
+        // What a presentation/domain module imports.
+        .library(
+            name: "KVRouterCore",
+            targets: ["KVRouterCore"]
+        ),
+        // Spies and fakes. Link from test targets only.
+        .library(
+            name: "KVRouterTesting",
+            targets: ["KVRouterTesting"]
         )
     ],
     dependencies: [
@@ -20,8 +32,13 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "KVRouterCore",
+            path: "Sources/KVRouterCore"
+        ),
+        .target(
             name: "KVRouterKit",
             dependencies: [
+                "KVRouterCore",
                 .product(
                     name: "SwiftUIIntrospect",
                     package: "swiftui-introspect"
@@ -29,9 +46,14 @@ let package = Package(
             ],
             path: "Sources/KVRouterKit"
         ),
+        .target(
+            name: "KVRouterTesting",
+            dependencies: ["KVRouterCore"],
+            path: "Sources/KVRouterTesting"
+        ),
         .testTarget(
             name: "KVRouterKitTests",
-            dependencies: ["KVRouterKit"],
+            dependencies: ["KVRouterKit", "KVRouterTesting"],
             path: "Tests/KVRouterKitTests"
         )
     ],

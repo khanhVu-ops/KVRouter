@@ -185,6 +185,11 @@ public final class KVAppRouter: ObservableObject {
     /// operations issued back-to-back.
     private var lastOperation: Task<Void, Never>?
 
+    /// Bumped on every ``enqueue(_:)``. `Task` is a value type with no identity,
+    /// so this is what lets ``settle()`` tell "the queue drained" apart from
+    /// "the operation I awaited finished and queued another one".
+    private var operationGeneration: UInt64 = 0
+
     /// Continuations waiting for the sheet dismissal animation to complete
     /// (resumed by ``sheetDidDismiss()`` or a timeout fallback).
     private var sheetDismissWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
@@ -202,9 +207,28 @@ public final class KVAppRouter: ObservableObject {
     /// Enqueue a navigation operation. Operations run strictly in FIFO order.
     private func enqueue(_ operation: @escaping @MainActor () async -> Void) {
         let previous = lastOperation
+        operationGeneration += 1
         lastOperation = Task { @MainActor in
             await previous?.value
             await operation()
+        }
+    }
+
+    /// Wait until every queued navigation operation has finished.
+    ///
+    /// Navigation is fire-and-forget: `push` returns immediately while the work
+    /// runs on the FIFO queue. Await this to observe the settled state instead
+    /// of sleeping — in tests, or before persisting the path.
+    public func settle() async {
+        // Another caller can enqueue while this call is suspended, so awaiting
+        // the tail once is not enough — keep going until no new operation
+        // arrived. No operation enqueues another one today; the loop guards the
+        // concurrent-caller case, and keeps holding if that ever changes.
+        while true {
+            let generation = operationGeneration
+            guard let operation = lastOperation else { return }
+            await operation.value
+            if operationGeneration == generation { return }
         }
     }
 

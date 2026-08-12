@@ -236,6 +236,12 @@ tạo Task ngủ 1.25s không cancel. → giữ handle và `cancel()`, đúng pa
 **BUG-7 (P2) — TabView làm rụng transition driver.** `KVRouterHost.swift:61`, chuyển tab →
 `onDisappear` → `detach()`. → ref-count attach/detach.
 
+**BUG-9 (P2) — `replaceTop(transition:)` không animate.** `KVTransitionOperation.replace`
+không được tạo ở bất cứ đâu; `replaceTop` nhét transition vào `transitionOverrides` nhưng
+không gọi `performNavigation`, nên replace không animate và transition chỉ có hiệu lực lúc
+entry bị pop về sau. API nhận tham số mà không làm điều tên nó hứa. Chi tiết và hai phương án
+ở [api-inventory-3.0.md §5.1](api-inventory-3.0.md).
+
 **BUG-8 (P3) — router mặc định nuốt navigation im lặng.** `KVRouterEnvironment.swift:20`.
 Quên bọc `KVRouterHost` thì push vào một router global vô hình: không crash, không log, không
 gì xảy ra. → `KVNullRouter` `assertionFailure` trong DEBUG, no-op ở release.
@@ -259,8 +265,9 @@ Dựng `KVRouterCore` (`KVRoute`, `AnyKVRoute`, `KVRestorableRoute`, `KVRouting`
 `KVRouteMiddleware`) và `KVRouterTesting` (`KVRouterSpy`, `await settle()`).
 `Package.swift` 3 target.
 
-Việc đầu tiên: **kiểm kê đủ bề mặt public hiện tại** rồi quyết từng API vào `KVRouting`,
-`KVViewRouting`, hay bỏ. Sketch ở Phần A chưa phải kiểm kê.
+Kiểm kê đầy đủ bề mặt public → đích của từng API: **[api-inventory-3.0.md](api-inventory-3.0.md)**
+(sketch ở Phần A chỉ là phác thảo, bảng kiểm kê mới là nguồn đúng — nó sửa lại chỗ Phần A xếp
+`popTo(tag:)` vào `KVRouting`).
 
 Vướng thứ tự cần xử lý: nếu Kit hoàn toàn không đổi ở phase này thì `KVAppRouter` chưa
 conform `KVRouting`, nên spy và router thật chưa thay thế được cho nhau — ViewModel viết ở
