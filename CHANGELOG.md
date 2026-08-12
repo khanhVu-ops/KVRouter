@@ -55,7 +55,13 @@ migration guide, because effectively nobody depends on 2.x yet.
 - The middleware chain had no watchdog, so one `await` that never returned
   wedged the operation queue for the rest of the process.
 - `replaceTop(with:transition:)` recorded the transition but never played it;
-  the argument only took effect when that entry was later popped.
+  the argument only took effect when that entry was later popped. The overload is
+  removed rather than repaired: SwiftUI does not give UIKit a single matching
+  stack operation for a replace, so the delegate is never asked for an animator.
+- A `UIView` was installed as `view.mask` for the reveal transition, on views
+  that are `UIHostingController` views. UIKit logs that as unsupported and warns
+  of a broken hierarchy; it is a `CALayer` mask now, which never enters the view
+  hierarchy.
 - Sheet and full-cover view builders leaked on swipe-to-dismiss. Removed with
   the modal layer rather than patched.
 - The transition coordinator was wired in `onAppear`, so swapping routers left
@@ -81,8 +87,7 @@ migration guide, because effectively nobody depends on 2.x yet.
 
 ### Known Gaps
 
-- Whether UIKit renders custom animator frames for a same-depth
-  `setViewControllers` (the `replaceTop` transition) is unverified.
+- None currently tracked.
 
 ### Compatibility
 

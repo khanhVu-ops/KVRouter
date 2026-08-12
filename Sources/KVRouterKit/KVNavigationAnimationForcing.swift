@@ -220,15 +220,6 @@ extension UINavigationController {
             return (.pop, previous.last, next.last)
         }
 
-        // Same depth, different top: a replace. UIKit has no `.replace`
-        // operation and reports these as a push, so classify them that way.
-        if !previous.isEmpty,
-           previous.count == next.count,
-           previous.last !== next.last,
-           kvControllerPrefixMatches(previous.dropLast(), next.dropLast()) {
-            return (.push, previous.last, next.last)
-        }
-
         return nil
     }
 

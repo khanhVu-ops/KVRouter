@@ -62,7 +62,7 @@ final class KVTransitionAnimatorTests: XCTestCase {
         XCTAssertEqual(view.alpha, 0.2, accuracy: 0.001)
         XCTAssertEqual(view.layer.cornerRadius, 24, accuracy: 0.001)
         XCTAssertEqual(view.layer.zPosition, 10, accuracy: 0.001)
-        XCTAssertNotNil(view.mask)
+        XCTAssertNotNil(view.layer.mask)
         XCTAssertFalse(view.isUserInteractionEnabled)
 
         managed.restore()
@@ -103,14 +103,16 @@ final class KVTransitionAnimatorTests: XCTestCase {
             containerSize: view.bounds.size
         )
 
-        let mask = try XCTUnwrap(view.mask)
+        // A CALayer, not a UIView: `view.mask = someView` makes UIKit insert
+        // that view into the hierarchy, and these are UIHostingController views.
+        let mask = try XCTUnwrap(view.layer.mask)
         let radius = hypot(view.bounds.width, view.bounds.height)
-        XCTAssertEqual(mask.center.x, view.bounds.maxX, accuracy: 0.001)
-        XCTAssertEqual(mask.center.y, view.bounds.minY, accuracy: 0.001)
+        XCTAssertEqual(mask.position.x, view.bounds.maxX, accuracy: 0.001)
+        XCTAssertEqual(mask.position.y, view.bounds.minY, accuracy: 0.001)
         XCTAssertEqual(mask.bounds.width, radius * 2, accuracy: 0.001)
         XCTAssertEqual(mask.bounds.height, radius * 2, accuracy: 0.001)
-        XCTAssertEqual(mask.layer.cornerRadius, radius, accuracy: 0.001)
-        XCTAssertTrue(mask.layer.masksToBounds)
+        XCTAssertEqual(mask.cornerRadius, radius, accuracy: 0.001)
+        XCTAssertTrue(mask.masksToBounds)
     }
 
     func testPushHierarchyPlacesDestinationAboveSource() {

@@ -494,13 +494,13 @@ extension KVAppRouter {
         replaceTop(with: route, transition: nil)
     }
 
-    /// Replace the top route with a per-navigation transition override.
-    public func replaceTop(
-        with route: any KVRoute,
-        transition: KVNavigationTransition
-    ) {
-        replaceTop(with: route, transition: Optional(transition))
-    }
+    // No `transition:` overload on purpose. A replace cannot be animated: the
+    // custom animator hangs off UINavigationControllerDelegate, and SwiftUI does
+    // not hand UIKit a same-depth stack mutation for a changed top entry, so the
+    // delegate is never asked. (UIKit itself would cooperate — a same-depth
+    // `setViewControllers` is reported as `.push` — SwiftUI is the blocker.)
+    // 2.x accepted a `transition:` here and silently ignored it, which is worse
+    // than not offering it.
 
     private func replaceTop(
         with route: any KVRoute,
@@ -510,35 +510,19 @@ extension KVAppRouter {
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
-            await self.commitReplaceTop(with: entry, transition: transition)
+            self.commitReplaceTop(with: entry)
         }
     }
 
-    /// Swaps the top entry through the transition driver.
-    ///
-    /// Until 3.0 this mutated the stack directly, so `replaceTop(transition:)`
-    /// recorded the transition but never played it — the argument only took
-    /// effect when that entry was later popped.
-    private func commitReplaceTop(
-        with entry: KVNavigationEntry,
-        transition: KVNavigationTransition?
-    ) async {
-        let previous = navigationEntries.last
-        let request = KVTransitionRequest(
-            operation: .replace,
-            from: previous,
-            to: entry,
-            transitionOverride: transition
-        )
+    /// Swaps the top entry.
+    private func commitReplaceTop(with entry: KVNavigationEntry) {
         // The outgoing screen leaves the stack, so its middleware must not run
         // again as though the system had popped it.
-        markRouterRemoved(previous)
-        await performNavigation(request) {
-            if self.navigationEntries.isEmpty {
-                self.navigationEntries = [entry]
-            } else {
-                self.navigationEntries[self.navigationEntries.count - 1] = entry
-            }
+        markRouterRemoved(navigationEntries.last)
+        if navigationEntries.isEmpty {
+            navigationEntries = [entry]
+        } else {
+            navigationEntries[navigationEntries.count - 1] = entry
         }
     }
 
@@ -548,15 +532,6 @@ extension KVAppRouter {
     ///   - build: Closure that builds the view.
     public func replaceTopWithView<V: View>(tag: String? = nil, _ build: @escaping () -> V) {
         replaceTopWithView(tag: tag, transition: nil, build)
-    }
-
-    /// Replace the top route with a dynamic view and transition override.
-    public func replaceTopWithView<V: View>(
-        tag: String? = nil,
-        transition: KVNavigationTransition,
-        _ build: @escaping () -> V
-    ) {
-        replaceTopWithView(tag: tag, transition: Optional(transition), build)
     }
 
     private func replaceTopWithView<V: View>(
@@ -580,7 +555,7 @@ extension KVAppRouter {
                 self.dynamicBuilders[dynamicRoute.id] = nil
             }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
-            await self.commitReplaceTop(with: entry, transition: transition)
+            self.commitReplaceTop(with: entry)
         }
     }
 

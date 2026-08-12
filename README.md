@@ -143,8 +143,11 @@ router.replaceTop(with: ShopRoute.settings)
 ```
 
 The transition stored with the top entry is automatically reversed by a
-single-screen `pop()`. Replace and bulk path changes stay system-owned so the
-navigation hierarchy remains predictable.
+single-screen `pop()`. Replace and bulk path changes are not animated and take no
+`transition:` argument: the custom animator hangs off
+`UINavigationControllerDelegate`, and SwiftUI does not hand UIKit a single
+matching stack operation for either. 2.x accepted a `transition:` on `replaceTop`
+and silently ignored it.
 
 ### Built-In Styles
 
@@ -441,7 +444,7 @@ nothing.
 | Area | Primary APIs |
 |---|---|
 | Push | `push(_:transition:)`, `pushView(tag:transition:_:)` |
-| Path changes | `replaceTop`, `setPath` |
+| Path changes | `replaceTop`, `setPath` (not animated — see below) |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |

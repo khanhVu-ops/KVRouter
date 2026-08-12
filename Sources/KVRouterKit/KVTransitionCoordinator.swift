@@ -167,12 +167,8 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             supportsNativeZoom: Self.supportsNativeZoom
         )
 
-        // `.replace` included: it is what makes `replaceTop(transition:)`
-        // actually animate instead of silently recording the transition.
-        guard request.operation != .replace || resolved.backend == .custom else {
-            prepareNavigationAnimationIntent(for: request)
+        guard request.operation == .push || request.operation == .pop else {
             mutation()
-            bridge?.refreshInteractivePopAvailability()
             return
         }
 
@@ -500,7 +496,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
 private extension UINavigationController.Operation {
     func matches(_ operation: KVTransitionOperation) -> Bool {
         switch (self, operation) {
-        case (.push, .push), (.pop, .pop), (.push, .replace):
+        case (.push, .push), (.pop, .pop):
             return true
         default:
             return false

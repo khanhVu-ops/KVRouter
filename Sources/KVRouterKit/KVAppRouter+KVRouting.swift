@@ -21,8 +21,6 @@ public protocol KVViewRouting: KVRouting {
 
     func push(_ route: any KVRoute, transition: KVNavigationTransition)
 
-    func replaceTop(with route: any KVRoute, transition: KVNavigationTransition)
-
     func pushView<V: View>(tag: String?, _ build: @escaping () -> V)
 
     func pushView<V: View>(
@@ -33,11 +31,8 @@ public protocol KVViewRouting: KVRouting {
 
     func replaceTopWithView<V: View>(tag: String?, _ build: @escaping () -> V)
 
-    func replaceTopWithView<V: View>(
-        tag: String?,
-        transition: KVNavigationTransition,
-        _ build: @escaping () -> V
-    )
+    // No `transition:` on the replace commands: a replace cannot be animated.
+    // See the note on `KVAppRouter.replaceTop(with:)`.
 
     /// Pop back to the nearest screen below pushed with this tag.
     ///
@@ -85,12 +80,6 @@ public extension KVViewRouting {
         replaceTopWithView(tag: nil, build)
     }
 
-    func replaceTopWithView<V: View>(
-        transition: KVNavigationTransition,
-        _ build: @escaping () -> V
-    ) {
-        replaceTopWithView(tag: nil, transition: transition, build)
-    }
 }
 
 // MARK: - ================================

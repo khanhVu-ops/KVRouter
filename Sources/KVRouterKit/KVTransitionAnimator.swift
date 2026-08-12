@@ -88,14 +88,14 @@ final class KVManagedTransitionView {
         let cornerRadius: CGFloat
         let masksToBounds: Bool
         let zPosition: CGFloat
-        let mask: UIView?
+        let mask: CALayer?
         let isDoubleSided: Bool
         let isUserInteractionEnabled: Bool
     }
 
     let view: UIView
     private let snapshot: Snapshot
-    private var transitionMask: UIView?
+    private var transitionMask: CALayer?
 
     init(_ view: UIView) {
         self.view = view
@@ -105,7 +105,7 @@ final class KVManagedTransitionView {
             cornerRadius: view.layer.cornerRadius,
             masksToBounds: view.layer.masksToBounds,
             zPosition: view.layer.zPosition,
-            mask: view.mask,
+            mask: view.layer.mask,
             isDoubleSided: view.layer.isDoubleSided,
             isUserInteractionEnabled: view.isUserInteractionEnabled
         )
@@ -119,7 +119,7 @@ final class KVManagedTransitionView {
         let resolved = state.resolved(containerSize: containerSize)
         guard let origin = resolved.revealOrigin else { return }
         let mask = makeMask(origin: origin)
-        mask.transform = .identity
+        mask.transform = CATransform3DIdentity
     }
 
     func apply(
@@ -140,7 +140,7 @@ final class KVManagedTransitionView {
 
         if let origin = resolved.revealOrigin {
             let mask = transitionMask ?? makeMask(origin: origin)
-            mask.transform = CGAffineTransform(scaleX: 0.001, y: 0.001)
+            mask.transform = CATransform3DMakeScale(0.001, 0.001, 1)
         }
     }
 
@@ -150,7 +150,7 @@ final class KVManagedTransitionView {
         view.layer.cornerRadius = snapshot.cornerRadius
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
-        transitionMask?.transform = .identity
+        transitionMask?.transform = CATransform3DIdentity
     }
 
     func applyHero(
@@ -177,13 +177,20 @@ final class KVManagedTransitionView {
         view.layer.cornerRadius = snapshot.cornerRadius
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
-        view.mask = snapshot.mask
+        view.layer.mask = snapshot.mask
         view.layer.isDoubleSided = snapshot.isDoubleSided
         view.isUserInteractionEnabled = snapshot.isUserInteractionEnabled
         transitionMask = nil
     }
 
-    private func makeMask(origin: UnitPoint) -> UIView {
+    /// A `CALayer` rather than a `UIView`.
+    ///
+    /// `view.mask = someView` makes UIKit add that view into the hierarchy, and
+    /// the views being transitioned here are `UIHostingController` views — which
+    /// logs "Adding 'UIView' as a subview of UIHostingController.view is not
+    /// supported and may result in a broken view hierarchy". A mask layer needs
+    /// no view and never enters the hosting hierarchy at all.
+    private func makeMask(origin: UnitPoint) -> CALayer {
         let center = CGPoint(
             x: view.bounds.width * origin.x,
             y: view.bounds.height * origin.y
@@ -192,18 +199,14 @@ final class KVManagedTransitionView {
         let farthestY = max(center.y, view.bounds.height - center.y)
         let radius = hypot(farthestX, farthestY)
         let diameter = max(radius * 2, 1)
-        let mask = UIView(frame: CGRect(
-            x: 0,
-            y: 0,
-            width: diameter,
-            height: diameter
-        ))
-        mask.center = center
-        mask.backgroundColor = .black
-        mask.isUserInteractionEnabled = false
-        mask.layer.cornerRadius = diameter / 2
-        mask.layer.masksToBounds = true
-        view.mask = mask
+
+        let mask = CALayer()
+        mask.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        mask.position = center
+        mask.backgroundColor = UIColor.black.cgColor
+        mask.cornerRadius = diameter / 2
+        mask.masksToBounds = true
+        view.layer.mask = mask
         transitionMask = mask
         return mask
     }
@@ -218,7 +221,7 @@ enum KVTransitionHierarchy {
         toView: UIView
     ) {
         switch operation {
-        case .push, .replace:
+        case .push:
             container.insertSubview(toView, aboveSubview: fromView)
         case .pop:
             container.insertSubview(toView, belowSubview: fromView)

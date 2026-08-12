@@ -57,10 +57,6 @@ final class KVNullRouter: KVViewRouting {
         reportMissingHost("push(_:transition:)")
     }
 
-    func replaceTop(with route: any KVRoute, transition: KVNavigationTransition) {
-        reportMissingHost("replaceTop(with:transition:)")
-    }
-
     func pushView<V: View>(tag: String?, _ build: @escaping () -> V) {
         reportMissingHost("pushView")
     }
@@ -75,14 +71,6 @@ final class KVNullRouter: KVViewRouting {
 
     func replaceTopWithView<V: View>(tag: String?, _ build: @escaping () -> V) {
         reportMissingHost("replaceTopWithView")
-    }
-
-    func replaceTopWithView<V: View>(
-        tag: String?,
-        transition: KVNavigationTransition,
-        _ build: @escaping () -> V
-    ) {
-        reportMissingHost("replaceTopWithView(transition:)")
     }
 
     func popTo(tag: String) { reportMissingHost("popTo(tag:)") }

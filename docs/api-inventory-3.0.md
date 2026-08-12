@@ -22,9 +22,9 @@ Việc đầu tiên của Phase 1. Mỗi API public hiện tại được quyế
 | `pushView(_ view:, tag:)` | **View** | |
 | `pushView(_ view:, tag:, transition:)` | **View** | |
 | `replaceTop(with:)` | **Core** | |
-| `replaceTop(with:, transition:)` | **View** | ⚠️ xem BUG-9 |
+| `replaceTop(with:, transition:)` | **Xoá** | không animate được — xem §5.1 |
 | `replaceTopWithView(tag:_:)` | **View** | |
-| `replaceTopWithView(tag:transition:_:)` | **View** | |
+| `replaceTopWithView(tag:transition:_:)` | **Xoá** | cùng lý do |
 | `setPath(_:)` | **Core** | |
 | `restorePath(_:)` | **Xoá** | thay bằng `KVPathCodec` + `setPath` — xem §5 |
 | `pop()` | **Core** | |
@@ -35,7 +35,7 @@ Việc đầu tiên của Phase 1. Mỗi API public hiện tại được quyế
 | `popTo(tag:)` | **View** | **plan ghi sai là Core** — xem §5 |
 | `popTo(_ viewType:)` | **View** | |
 | `path` (get/set) | **Nội bộ** | thay bằng `stackDepth` / `topRoute` — xem §5 |
-| `handle(url:)` | **Xoá** | sang `KVDeepLinkParser` (Phase 5) |
+| `handle(url:)` | **Xoá** | app tự `.onOpenURL` + `push` — không cần protocol nào |
 | `appFeatureViewBuilder` | **Xoá** | registry thay thế |
 | `deepLinkViewBuilder` | **Xoá** | registry thay thế |
 | `init(middlewares:)` | **View** | `KVAppRouter` là kiểu cụ thể, sống ở Kit |
@@ -60,11 +60,11 @@ Việc đầu tiên của Phase 1. Mỗi API public hiện tại được quyế
 | `KVLoggingMiddleware` | **Core** | |
 | `EnvironmentValues.router` | **View** | kiểu đổi thành `any KVViewRouting`; default là `KVNullRouter` `assertionFailure` trong DEBUG (BUG-8) |
 | `View.appRouter(_:)` | **View** | |
-| `View.kvTransitionSource(id:)` | **View** | thêm `kvZoomDestination(sourceID:)` iOS 18+ |
+| `View.kvTransitionSource(id:)` | **View** | giữ nguyên; `kvZoomDestination(sourceID:)` chưa làm |
 | `KVRouterHost` | **View** | thêm `.kvRoutes { }` |
 | `KVNavigationTransition` + toàn bộ static factory | **View** | giữ nguyên, không đổi |
 | `KVTransitionAnimation`, `KVTransitionViewState`, `KVTransitionStage`, `KVPopTransition`, `KVFlip3DAxis` | **View** | giữ nguyên, không đổi |
-| `KVTransitionOperation` | **View** | case `.replace` — xem BUG-9 |
+| `KVTransitionOperation` | **View** | case `.replace` đã xoá — xem §5.1 |
 
 Toàn bộ API transition (khoảng 40 declaration) đi qua 3.0 **không đổi một dòng**. Đó là phần
 đã chín của SDK; refactor không nên chạm vào.
@@ -83,10 +83,17 @@ animate. Transition truyền vào chỉ có hiệu lực lúc entry đó bị *p
 
 API công khai nhận tham số mà không làm điều tên nó hứa.
 
-**✅ Đã chốt: fix cho nó animate thật.** Cho replace đi qua `performNavigation` với
-`operation: .replace`. Hai nhánh `switch` kia thành sống, `.replace` có lý do tồn tại, tham
-số làm đúng việc. Coordinator phải nới `guard request.operation == .push || .pop` để nhận
-`.replace`. Làm ở Phase 4 cùng các bug khác.
+**Đã thử fix (option a) và thất bại — kết quả là bỏ tham số (option b).**
+
+Probe test trên `UINavigationController` thật cho thấy **UIKit sẵn sàng hợp tác**: một
+`setViewControllers` cùng độ sâu được báo cho delegate là `.push`. Nhưng khi cắm hết đường ống
+router-side rồi thử với transition `flip3D` dài **2 giây**, screenshot ngay sau cú bấm đã thấy
+trạng thái cuối — không có animation nào chạy. Nút thắt là **SwiftUI**: nó không đưa cho UIKit
+một mutation cùng độ sâu khi phần tử cuối của path đổi (rất có thể pop rồi push thành hai
+bước), nên delegate không bao giờ được hỏi.
+
+→ Đã bỏ `transition:` khỏi `replaceTop`/`replaceTopWithView` và xoá case `.replace`. Giữ một
+tham số không làm gì chính là bug ban đầu.
 
 ### 5.2 `popTo(tag:)` thuộc Core hay View?
 

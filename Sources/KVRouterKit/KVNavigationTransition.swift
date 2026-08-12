@@ -4,7 +4,6 @@ import UIKit
 public enum KVTransitionOperation: Sendable, Equatable {
     case push
     case pop
-    case replace
 }
 
 public enum KVFlip3DAxis: Sendable {

@@ -48,7 +48,7 @@ extension KVNavigationTransition {
         let stage: KVTransitionStage
 
         switch operation {
-        case .push, .replace:
+        case .push:
             stage = push
         case .pop:
             if case .custom(let custom) = kind,
