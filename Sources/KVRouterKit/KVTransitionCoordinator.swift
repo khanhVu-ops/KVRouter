@@ -178,10 +178,21 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             mutation()
             bridge?.refreshInteractivePopAvailability()
         case .nativeZoom:
-            if request.operation == .push, let destination = request.to {
-                nativeZoomEntryIDs.insert(destination.id)
+            // Push only. The push needs the forcing: without it SwiftUI hands
+            // UIKit `animated: false` and the zoom does not play at all.
+            //
+            // The pop must not have it. SwiftUI drives the zoom dismissal itself
+            // and passes `animated: false` on purpose there; upgrading it made
+            // UIKit run a second, concurrent transition, and SwiftUI never
+            // un-hid the `matchedTransitionSource`. The source view stayed
+            // invisible after the dismiss while still holding its slot in the
+            // layout — a hole in the grid.
+            if request.operation == .push {
+                if let destination = request.to {
+                    nativeZoomEntryIDs.insert(destination.id)
+                }
+                prepareNavigationAnimationIntent(for: request)
             }
-            prepareNavigationAnimationIntent(for: request)
             mutation()
             bridge?.refreshInteractivePopAvailability()
         case .custom:

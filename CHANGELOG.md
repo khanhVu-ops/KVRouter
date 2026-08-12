@@ -58,6 +58,11 @@ migration guide, because effectively nobody depends on 2.x yet.
   the argument only took effect when that entry was later popped. The overload is
   removed rather than repaired: SwiftUI does not give UIKit a single matching
   stack operation for a replace, so the delegate is never asked for an animator.
+- A native-zoom dismiss left the source view hidden, holding an empty slot in
+  the layout. The push needs `animated: true` forced onto UIKit, but the pop does
+  not: SwiftUI drives the zoom dismissal itself and passes `animated: false` on
+  purpose, so upgrading it ran a second, concurrent UIKit transition and SwiftUI
+  never un-hid `matchedTransitionSource`. Forcing is now push-only.
 - A `UIView` was installed as `view.mask` for the reveal transition, on views
   that are `UIHostingController` views. UIKit logs that as unsupported and warns
   of a broken hierarchy; it is a `CALayer` mask now, which never enters the view
@@ -87,7 +92,11 @@ migration guide, because effectively nobody depends on 2.x yet.
 
 ### Known Gaps
 
-- None currently tracked.
+- The native-zoom source fix is reasoned from the symptom rather than reproduced
+  in a harness: the source view holding an empty slot in the layout is what
+  SwiftUI hiding `matchedTransitionSource` and never restoring it looks like, and
+  the concurrent UIKit transition was the only thing this package did to that
+  path. Confirm on a scrolled `LazyVGrid` before considering it closed.
 
 ### Compatibility
 

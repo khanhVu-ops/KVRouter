@@ -281,6 +281,74 @@ final class KVTransitionCoordinatorTests: XCTestCase {
         )
     }
 
+    // MARK: - Animation forcing
+
+    /// `.system` is the reason animation forcing exists: UIKit owns the
+    /// animation and SwiftUI sometimes hands it `animated: false`.
+    func testSystemTransitionArmsAnimationForcing() async {
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+
+        await coordinator.perform(pushRequest(transition: .system)) {}
+
+        XCTAssertTrue(
+            coordinator.shouldForceNavigationAnimation(
+                for: .push,
+                from: nil,
+                to: nil
+            )
+        )
+    }
+
+    /// The native-zoom **pop** must not be forced. SwiftUI drives the zoom
+    /// dismissal itself and passes `animated: false` on purpose; forcing it made
+    /// UIKit run a second, concurrent transition and SwiftUI never un-hid the
+    /// `matchedTransitionSource`, so the source view stayed invisible after the
+    /// dismiss while still holding its slot in the layout.
+    ///
+    /// The push keeps the forcing — see
+    /// `testNativeZoomTransitionForcesUIKitAnimationWhenRequestedFalse`.
+    func testNativeZoomPopDoesNotArmAnimationForcing() async throws {
+        guard #available(iOS 18.0, *) else {
+            throw XCTSkip("Native navigation zoom requires iOS 18 or newer")
+        }
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.hasSource = { _ in true }
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
+
+        await coordinator.perform(
+            KVTransitionRequest(
+                operation: .push,
+                from: nil,
+                to: entry,
+                transitionOverride: .zoom(sourceID: "card")
+            )
+        ) {}
+        // Consume the push intent so the pop is measured on its own.
+        _ = coordinator.shouldForceNavigationAnimation(
+            for: .push,
+            from: nil,
+            to: nil
+        )
+
+        await coordinator.perform(
+            KVTransitionRequest(
+                operation: .pop,
+                from: entry,
+                to: nil,
+                transitionOverride: .zoom(sourceID: "card")
+            )
+        ) {}
+
+        XCTAssertFalse(
+            coordinator.shouldForceNavigationAnimation(
+                for: .pop,
+                from: nil,
+                to: nil
+            ),
+            "A native-zoom pop must leave the UIKit animation flag alone"
+        )
+    }
+
     private func pushRequest(
         transition: KVNavigationTransition
     ) -> KVTransitionRequest {
