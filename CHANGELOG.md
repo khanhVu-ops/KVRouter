@@ -2,6 +2,95 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## Unreleased — 3.0.0
+
+Not released yet. 3.0 is a clean break: there is no compatibility shim and no
+migration guide, because effectively nobody depends on 2.x yet.
+
+### Breaking Changes
+
+- **`KVAppRoute` is gone.** Apps declare their own routes as plain values
+  conforming to `KVRoute`, and the composition root maps them to views with
+  `.kvRoutes { }`. `appFeatureViewBuilder` and `deepLinkViewBuilder` are removed
+  along with it — the closed three-case enum meant "type-safe routing" was in
+  practice either `appFeature("some-string")` or a `pushView { }` closure.
+- **Modals are no longer the router's business.** `KVSheetRoute`,
+  `KVFullCoverRoute`, `sheet`, `fullCover`, every `present*` / `dismiss*` method
+  and `KVRouteMiddleware.willDismiss` are removed. Use SwiftUI's own `.sheet`
+  and `.fullScreenCover`; see the Scope section of the README for the
+  sheet-then-cover recipe.
+- **`handle(url:)` and `restorePath` are removed.** Deep links are parsed by the
+  app and pushed like any other route.
+- `KVRouteMiddleware` now speaks `any KVRoute` instead of `KVAppRoute`.
+- `@Environment(\.router)` is typed `any KVViewRouting` rather than
+  `KVAppRouter`, and defaults to a placeholder that reports a missing host.
+- The public `path` property is replaced by the read-only `routes` snapshot plus
+  `stackDepth` and `topRoute`.
+- `popTo(tag:)` no longer matches typed routes. Tags come only from `pushView`;
+  a typed route is a value, so `popTo(_:)` addresses it directly.
+
+### Added
+
+- `KVRouterCore`: the route model (`KVRoute`, `AnyKVRoute`, `KVRestorableRoute`)
+  and the `KVRouting` command port. Foundation only — no SwiftUI, UIKit,
+  Introspect or method swizzling — so a presentation layer can depend on it.
+- `KVRouterTesting`: `KVRouterSpy`, a synchronous recording router with a
+  simulated stack, for testing ViewModels without a host.
+- `KVViewRouting`: `KVRouting` plus the view-layer commands (`pushView { }`,
+  transition overloads).
+- `KVAppRouter.settle()`: await the FIFO queue instead of polling.
+- `KVAppRouter.middlewareTimeout`, so a hung middleware cannot wedge navigation.
+
+### Fixed
+
+- A single `isRouterControlledPop` flag decided whether a pop was
+  router-driven. It could not describe two pops in flight, and any path change
+  that failed to shrink left it stuck, silently swallowing `willPop` for the
+  next system pop. Replaced by per-entry bookkeeping.
+- A system pop of several screens spawned one detached `Task` per screen,
+  outside the FIFO queue, letting their middleware interleave.
+- The middleware chain had no watchdog, so one `await` that never returned
+  wedged the operation queue for the rest of the process.
+- `replaceTop(with:transition:)` recorded the transition but never played it;
+  the argument only took effect when that entry was later popped.
+- Sheet and full-cover view builders leaked on swipe-to-dismiss. Removed with
+  the modal layer rather than patched.
+- The transition coordinator was wired in `onAppear`, so swapping routers left
+  it driving the previous one.
+- `onDisappear` tore down the UIKit bridge, so a `TabView` switch dropped custom
+  transitions until the tab came back.
+- `@Environment(\.router)` without a host returned a real, unhosted router, so
+  navigation silently did nothing.
+- `awaitSheetDismissal` leaked its continuation if the router deallocated first.
+- An uncancelled 1.25s task was left behind by every system-backed push or pop.
+
+### Performance
+
+- Destination, sheet and cover content views observed the router with
+  `@ObservedObject`, so any router change — presenting a sheet included —
+  invalidated every live destination and re-ran its `AnyView` builder. They take
+  a plain reference now.
+- The observation backend is resolved once at init behind a strategy, instead of
+  an `if #available` plus an `as? ObservationRegistrar` unbox on every property
+  read.
+- Internal reads use the stored entries rather than the `path` getter, which
+  mapped a fresh array per access.
+
+### Known Gaps
+
+- **State restoration is narrower than 2.0.** Encoding a mixed-type
+  `[any KVRoute]` stack needs a codec mapping `restorationID` back to a concrete
+  type, which has not landed. Persist a single concrete route type for now.
+- Whether UIKit renders custom animator frames for a same-depth
+  `setViewControllers` (the `replaceTop` transition) is unverified.
+
+### Compatibility
+
+- Minimum deployment target remains iOS 16.0. The dual-observation layer stays:
+  `@Observable` semantics on iOS 17+, `ObservableObject` on iOS 16.
+- The fallback is asymmetric — `@Environment` does not observe an
+  `ObservableObject` — so send commands rather than rendering from stack state.
+
 ## 2.0.0 - 2026-08-12
 
 ### Breaking Changes

@@ -312,9 +312,18 @@ kiểu cụ thể khi decode. **Đang là regression so với 2.0** (2.0 có `re
 `KVAppRoute` là `Codable`); README đã ghi rõ giới hạn tạm thời này.
 
 ### Phase 6 — Dọn & release
-Migrate XCTest → Swift Testing (đã sẵn Swift 6.2). Chuyển accessor test-only của
-`KVTransitionEndpoint` (~50 dòng production code mà Sources không ai gọi) sang Testing.
-CI (`.github/` hiện chưa có). README + example app viết lại. CHANGELOG 3.0.0.
+Chuyển accessor test-only của `KVTransitionEndpoint` (~50 dòng production code mà Sources
+không ai gọi) sang test target. CI (`.github/` chưa có). README + CHANGELOG 3.0.0.
+
+**Không migrate 128 test sang Swift Testing — lý do kỹ thuật của plan không đúng.** Plan
+giả định các test descriptor lặp cơ học nên `@Test(arguments:)` sẽ gọn lại. Soi thực tế thì
+mỗi test assert những con số **khác nhau** đặc thù từng style (offset slide, scale depth, góc
+flip); tham số hoá chỉ dồn số vào bảng và làm failure khó đọc hơn. Còn lại chỉ là diagnostic
+đẹp hơn — không đáng rewrite 128 test đang xanh.
+
+Thay vào đó: hai framework sống chung trong một target, test **mới** viết bằng Swift Testing.
+Bắt đầu bằng `KVRouteRegistry` và `KVDynamicViewRoute` — code mới của Phase 3 mà chưa có test
+nào chạm tới.
 
 ### Để đợt sau
 - **Navigation results** — `await router.push(_:expecting:)`. Ergonomics lớn cho MVVM

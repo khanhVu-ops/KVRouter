@@ -51,13 +51,7 @@ Then add the `KVRouterKit` product to your app target.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history and migration notes.
 
-## Migration From KVRouter 1.x
-
-The package, product, target and import name are now `KVRouterKit`:
-
-```swift
-import KVRouterKit
-```
+## Products
 
 The package ships three products: `KVRouterKit` (router plus SwiftUI host),
 `KVRouterCore` (route model and the `KVRouting` command port — no SwiftUI or
@@ -86,10 +80,21 @@ struct MyApp: App {
             ) {
                 HomeView()
             }
+            .kvRoutes { routes in
+                routes.register(ShopRoute.self) { route in
+                    switch route {
+                    case .productDetail(let id): ProductDetailView(id: id)
+                    case .cart:                  CartView()
+                    }
+                }
+            }
         }
     }
 }
 ```
+
+`.kvRoutes` is where routes meet views. A route type with no registration trips
+an assertion in debug builds rather than rendering blank.
 
 Use the environment router from any hosted view:
 
@@ -99,7 +104,11 @@ struct HomeView: View {
 
     var body: some View {
         VStack {
-            Button("Open detail") {
+            Button("Open a typed route") {
+                router.push(ShopRoute.productDetail(id: 42))
+            }
+
+            Button("Open an ad-hoc screen") {
                 router.pushView {
                     DetailView(id: 42)
                 }

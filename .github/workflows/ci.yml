@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The package needs Swift tools 6.2 / Swift 6 language mode, so pick the
+      # newest Xcode on the image rather than whatever is selected by default.
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+
+      # Device names change with every runner image, so resolve one instead of
+      # hardcoding "iPhone 16 Pro" and having CI break on an image bump.
+      - name: Resolve a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+import json, sys
+runtimes = json.load(sys.stdin)["devices"]
+for runtime in sorted(runtimes, reverse=True):
+    if "iOS" not in runtime:
+        continue
+    for device in runtimes[runtime]:
+        if device["name"].startswith("iPhone"):
+            print(device["udid"])
+            raise SystemExit
+raise SystemExit("no iPhone simulator available")
+')
+          echo "Resolved $UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -scheme KVRouterKit-Package \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -quiet
+
+  example:
+    name: Build example app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      # `generic/platform=iOS` compiles without booting a simulator: this job is
+      # here to catch API breaks the package's own tests cannot see, since the
+      # example app is the only consumer of the public surface.
+      - name: Build
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project KVRouterKitExample/KVRouterKitExample.xcodeproj \
+            -scheme KVRouterKitExample \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
