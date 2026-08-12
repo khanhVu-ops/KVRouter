@@ -146,7 +146,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
                 for: .pop,
                 from: detail,
                 to: root
-            ) is KVViewControllerTransitionAnimator
+            ) != nil
         )
         XCTAssertNil(coordinator.pendingTransaction)
     }

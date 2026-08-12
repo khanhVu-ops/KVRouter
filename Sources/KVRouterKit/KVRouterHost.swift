@@ -39,18 +39,6 @@ public struct KVRouterHost<Root: View>: View {
             .if(ignoreKeyboard) { view in
                 view.ignoresSafeArea(.keyboard)
             }
-            .sheet(
-                item: sheetBinding,
-                onDismiss: { router.sheetDidDismiss() }
-            ) { sheet in
-                KVRouterSheetContent(router: router, sheet: sheet)
-            }
-            .fullScreenCover(
-                item: fullCoverBinding,
-                onDismiss: { router.fullCoverDidDismiss() }
-            ) { cover in
-                KVRouterFullCoverContent(router: router, cover: cover)
-            }
             .onOpenURL { router.handle(url: $0) }
             .onAppear {
                 coordinator.sourceRegistry = sourceRegistry
@@ -112,31 +100,6 @@ public struct KVRouterHost<Root: View>: View {
         )
     }
 
-    private var sheetBinding: Binding<KVSheetRoute?> {
-        Binding(
-            get: { router.sheet },
-            set: { newValue in
-                if newValue == nil {
-                    Task { @MainActor in router.sheet = nil }
-                } else {
-                    router.sheet = newValue
-                }
-            }
-        )
-    }
-
-    private var fullCoverBinding: Binding<KVFullCoverRoute?> {
-        Binding(
-            get: { router.fullCover },
-            set: { newValue in
-                if newValue == nil {
-                    Task { @MainActor in router.fullCover = nil }
-                } else {
-                    router.fullCover = newValue
-                }
-            }
-        )
-    }
 }
 
 /// Not an `@ObservedObject` on purpose: the destination map is a pure function
@@ -182,24 +145,6 @@ private struct KVRouterDestinationContent: View {
         } else {
             router.buildView(for: entry)
         }
-    }
-}
-
-private struct KVRouterSheetContent: View {
-    let router: KVAppRouter
-    let sheet: KVSheetRoute
-
-    var body: some View {
-        router.buildSheet(for: sheet)
-    }
-}
-
-private struct KVRouterFullCoverContent: View {
-    let router: KVAppRouter
-    let cover: KVFullCoverRoute
-
-    var body: some View {
-        router.buildFullCover(for: cover)
     }
 }
 

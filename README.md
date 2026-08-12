@@ -8,13 +8,31 @@ An ergonomic, transition-aware SwiftUI router for iOS 16+ and Swift 6.
 - Interactive leading-edge pop for custom transition styles
 - GPU-friendly value-based custom transition DSL
 - FIFO navigation queue, async middleware, deep links and state restoration
-- Sheets and full-screen covers with safe presentation sequencing
 - Reduce Motion, interruption and live hierarchy cleanup
+
+## Scope
+
+KVRouterKit manages the **navigation stack**. Modals are not its business: use
+SwiftUI's own `.sheet` and `.fullScreenCover`, which already model presentation
+declaratively and need nothing from a router.
+
+To chain a cover after a sheet — SwiftUI cannot present one over the other —
+drive it from `onDismiss`, which fires once the dismissal actually finishes:
+
+```swift
+.sheet(isPresented: $showsSheet) {
+    if coverFollowsSheet { coverFollowsSheet = false; showsCover = true }
+} content: {
+    SettingsSheetView(presentCoverOnDismiss: $coverFollowsSheet)
+}
+.fullScreenCover(isPresented: $showsCover) { OnboardingCoverView() }
+```
 
 ## Example App
 
 Open `KVRouterKitExample/KVRouterKitExample.xcodeproj` to run the transition
 gallery and the routing, middleware, modal and deep-link demos.
+The "Modal" section shows the sheet-then-cover recipe above.
 
 ## Installation
 
@@ -90,10 +108,6 @@ struct HomeView: View {
                 router.pushView(transition: .depth) {
                     DetailView(id: 43)
                 }
-            }
-
-            Button("Present settings") {
-                router.presentSheet { SettingsView() }
             }
         }
     }
@@ -291,8 +305,7 @@ struct AuthMiddleware: KVRouteMiddleware {
 }
 ```
 
-`willPop(from:to:)` and `willDismiss(sheet:fullCover:)` return `false` to deny
-their corresponding router operation.
+`willPop(from:to:)` returns `false` to deny the pop.
 
 ## Deep Links
 
@@ -341,7 +354,6 @@ views and uses the host default transition for restored typed routes.
 | Path changes | `replaceTop`, `setPath`, `restorePath` |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
-| Modal | `presentSheet`, `dismissSheet`, `presentFullCover`, `dismissFull` |
 | Deep link | `handle(url:)` |
 
 ## License

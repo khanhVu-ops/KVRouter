@@ -23,7 +23,6 @@ import Observation
 /// **Features:**
 /// - Type-safe navigation with `KVAppRoute` enum
 /// - Dynamic view support with `pushView { }`
-/// - Modal presentation (sheets and full covers)
 /// - Middleware support for auth guards, logging, etc.
 /// - Deep link handling
 ///
@@ -35,25 +34,29 @@ import Observation
 /// router.push(.appFeature("profile"))
 /// router.pushView { CustomView() }
 ///
-/// // Modal presentation
-/// router.presentSheet { SettingsView() }
-/// router.presentFullCover { OnboardingView() }
-///
 /// // Navigation control
 /// router.pop()
 /// router.popToRoot()
 /// ```
+///
+/// - Note: The router manages the navigation stack only. Present modals with
+///   SwiftUI's own `.sheet` / `.fullScreenCover`, which already model
+///   presentation declaratively and need nothing from a router.
 ///
 /// - Note: `@MainActor`-isolated. Navigation operations run through a FIFO queue,
 ///   so two rapid calls (e.g. `push` twice) keep their order even when async
 ///   middleware takes different amounts of time for each route.
 ///
 /// **Observation:** On iOS 17+ the router participates in the `Observation`
-/// framework exactly like an `@Observable` class — views that read `path`,
-/// `sheet`, or `fullCover` directly (e.g. via `@Environment(\.router)`) only
-/// re-render when the property they read actually changes. On iOS 16 it falls
-/// back to `ObservableObject`, so `@ObservedObject` / `@StateObject` keep working
-/// everywhere.
+/// framework exactly like an `@Observable` class, so a view reading `path`
+/// re-renders only when `path` changes. On iOS 16 it falls back to
+/// `ObservableObject`.
+///
+/// - Warning: The fallback is asymmetric. `@Environment(\.router)` does not
+///   observe an `ObservableObject`, so a view that reads `path` through the
+///   environment updates on iOS 17+ but silently never updates on iOS 16.
+///   Treat `path` as internal state and send commands instead; use
+///   `@ObservedObject` if a view genuinely must render from it.
 @MainActor
 public final class KVAppRouter: ObservableObject {
 
@@ -87,8 +90,6 @@ public final class KVAppRouter: ObservableObject {
 
     private var _navigationEntries: [KVNavigationEntry] = []
     private var transitionOverrides: [UUID: KVNavigationTransition] = [:]
-    private var _sheet: KVSheetRoute?
-    private var _fullCover: KVFullCoverRoute?
 
     /// Navigation stack path for push navigation.
     public var path: [KVAppRoute] {
@@ -121,28 +122,6 @@ public final class KVAppRouter: ObservableObject {
         transitionOverrides[entry.id]
     }
 
-    /// Current sheet route (nil = no sheet presented).
-    public var sheet: KVSheetRoute? {
-        get {
-            trackAccess(\.sheet)
-            return _sheet
-        }
-        set {
-            withTrackedMutation(\.sheet) { _sheet = newValue }
-        }
-    }
-
-    /// Current full screen cover route (nil = no cover presented).
-    public var fullCover: KVFullCoverRoute? {
-        get {
-            trackAccess(\.fullCover)
-            return _fullCover
-        }
-        set {
-            withTrackedMutation(\.fullCover) { _fullCover = newValue }
-        }
-    }
-
     /// Middleware chain for route interception.
     private let middlewares: [KVRouteMiddleware]
 
@@ -172,12 +151,6 @@ public final class KVAppRouter: ObservableObject {
     /// Metadata for custom pushed views (kept in sync with `customBuilders`).
     private var customViewInfo: [UUID: CustomViewInfo] = [:]
 
-    /// Registry for custom sheet views.
-    private var customSheetBuilders: [UUID: () -> AnyView] = [:]
-
-    /// Registry for custom full cover views.
-    private var customFullCoverBuilders: [UUID: () -> AnyView] = [:]
-
     // MARK: - Serial Operation Queue
 
     /// Tail of the FIFO operation chain. Each navigation operation awaits the
@@ -189,10 +162,6 @@ public final class KVAppRouter: ObservableObject {
     /// so this is what lets ``settle()`` tell "the queue drained" apart from
     /// "the operation I awaited finished and queued another one".
     private var operationGeneration: UInt64 = 0
-
-    /// Continuations waiting for the sheet dismissal animation to complete
-    /// (resumed by ``sheetDidDismiss()`` or a timeout fallback).
-    private var sheetDismissWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     // MARK: - Initialization
 
@@ -803,134 +772,6 @@ extension KVAppRouter {
 }
 
 // MARK: - ================================
-// MARK: Sheet Presentation
-// MARK: ================================
-
-extension KVAppRouter {
-
-    /// Present a typed sheet route.
-    /// - Parameter sheet: The sheet route to present.
-    public func present(_ sheet: KVSheetRoute) {
-        enqueue { [weak self] in
-            self?.sheet = sheet
-        }
-    }
-
-    /// Present a dynamically built view as a sheet.
-    /// - Parameter build: Closure that builds the sheet content.
-    public func presentSheet<V: View>(_ build: @escaping () -> V) {
-        let id = UUID()
-        enqueue { [weak self] in
-            guard let self else { return }
-            self.customSheetBuilders[id] = { AnyView(build()) }
-            self.sheet = .customSheet(id)
-        }
-    }
-
-    /// Present an already-constructed view as a sheet.
-    /// - Parameter view: The view to present.
-    public func presentSheet<V: View>(_ view: V) {
-        presentSheet { view }
-    }
-
-    /// Dismiss the current sheet.
-    /// Middleware can cancel this operation by returning `false`.
-    /// Builder cleanup happens after the dismissal animation completes (see ``sheetDidDismiss()``).
-    public func dismissSheet() {
-        enqueue { [weak self] in
-            guard let self else { return }
-            guard let current = self.sheet else { return }
-            guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
-            self.sheet = nil
-        }
-    }
-
-    /// Dismiss the current sheet and execute a callback.
-    /// Middleware can cancel this operation by returning `false`;
-    /// the callback only runs when the dismissal actually happens.
-    /// - Parameter action: Callback to execute after dismissal.
-    public func dismissSheet(afterDismiss action: @escaping () -> Void) {
-        enqueue { [weak self] in
-            guard let self else { return }
-            guard let current = self.sheet else { return }
-            guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
-            self.sheet = nil
-            action()
-        }
-    }
-}
-
-// MARK: - ================================
-// MARK: Full Screen Cover Presentation
-// MARK: ================================
-
-extension KVAppRouter {
-
-    /// Present a typed full screen cover route.
-    /// - Parameter cover: The cover route to present.
-    public func presentFull(_ cover: KVFullCoverRoute) {
-        enqueue { [weak self] in
-            self?.fullCover = cover
-        }
-    }
-
-    /// Present a dynamically built view as a full screen cover.
-    ///
-    /// If a sheet is currently presented, it is dismissed first and the cover
-    /// is presented once the dismissal animation actually completes (signalled
-    /// by ``KVRouterHost``), with a short timeout fallback when no host is attached.
-    /// - Parameter build: Closure that builds the cover content.
-    public func presentFullCover<V: View>(_ build: @escaping () -> V) {
-        enqueue { [weak self] in
-            guard let self else { return }
-            if self.sheet != nil {
-                self.sheet = nil
-                await self.awaitSheetDismissal()
-            }
-            let id = UUID()
-            self.customFullCoverBuilders[id] = { AnyView(build()) }
-            self.fullCover = .customFullCover(id)
-        }
-    }
-
-    /// Present an already-constructed view as a full screen cover.
-    /// - Parameter view: The view to present.
-    public func presentFullCover<V: View>(_ view: V) {
-        presentFullCover { view }
-    }
-
-    /// Dismiss the current full screen cover.
-    /// Middleware can cancel this operation by returning `false`.
-    /// Builder cleanup happens after the dismissal animation completes (see ``fullCoverDidDismiss()``).
-    public func dismissFull() {
-        enqueue { [weak self] in
-            guard let self else { return }
-            guard let current = self.fullCover else { return }
-            guard await self.applyDismissMiddlewares(sheet: nil, fullCover: current) else { return }
-            self.fullCover = nil
-        }
-    }
-
-    /// Dismiss sheet and then present a full screen cover.
-    ///
-    /// Waits for the sheet dismissal to complete before presenting,
-    /// ensuring a safe transition between modal types.
-    /// Middleware can cancel the sheet dismissal by returning `false`.
-    /// - Parameter cover: The cover route to present.
-    public func dismissSheetThenPresentFull(_ cover: KVFullCoverRoute) {
-        enqueue { [weak self] in
-            guard let self else { return }
-            if let current = self.sheet {
-                guard await self.applyDismissMiddlewares(sheet: current, fullCover: nil) else { return }
-                self.sheet = nil
-                await self.awaitSheetDismissal()
-            }
-            self.fullCover = cover
-        }
-    }
-}
-
-// MARK: - ================================
 // MARK: Deep Linking
 // MARK: ================================
 
@@ -988,70 +829,6 @@ extension KVAppRouter {
         customBuilders[id]?() ?? AnyView(EmptyView())
     }
 
-    /// Build a view for a sheet route.
-    func buildCustomSheet(for id: UUID) -> AnyView {
-        customSheetBuilders[id]?() ?? AnyView(EmptyView())
-    }
-
-    /// Build a view for a full cover route.
-    func buildCustomFullCover(for id: UUID) -> AnyView {
-        customFullCoverBuilders[id]?() ?? AnyView(EmptyView())
-    }
-}
-
-// MARK: - ================================
-// MARK: Dismiss Completion Handling (Internal)
-// MARK: ================================
-
-extension KVAppRouter {
-
-    /// Called by ``KVRouterHost`` after a sheet dismissal animation completes
-    /// (programmatic or swipe-down). Drops every custom sheet builder except the
-    /// one backing a sheet that is currently presented (sheet-replace case),
-    /// and resumes any operation waiting on the dismissal (sheet → cover transitions).
-    func sheetDidDismiss() {
-        var activeID: UUID?
-        if case let .customSheet(id)? = sheet { activeID = id }
-        customSheetBuilders = customSheetBuilders.filter { $0.key == activeID }
-
-        let waiters = sheetDismissWaiters
-        sheetDismissWaiters = [:]
-        waiters.values.forEach { $0.resume() }
-    }
-
-    /// Called by ``KVRouterHost`` after a full screen cover dismissal completes.
-    /// Drops every custom cover builder except the currently presented one.
-    func fullCoverDidDismiss() {
-        var activeID: UUID?
-        if case let .customFullCover(id)? = fullCover { activeID = id }
-        customFullCoverBuilders = customFullCoverBuilders.filter { $0.key == activeID }
-    }
-
-    /// Suspend until the sheet dismissal animation completes.
-    ///
-    /// Resumed by ``sheetDidDismiss()`` when a ``KVRouterHost`` is attached; a
-    /// timeout fallback covers routers used without a host so the operation
-    /// queue can never stall.
-    private func awaitSheetDismissal(timeout: UInt64 = 700_000_000) async {
-        let waiterID = UUID()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            sheetDismissWaiters[waiterID] = continuation
-            // Strong `self`: the timeout task is the only guaranteed resume path,
-            // so letting the router deallocate first would leak the continuation.
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: timeout)
-                self.resumeSheetDismissWaiter(id: waiterID)
-            }
-        }
-    }
-
-    /// Resume a single waiter (timeout path). Safe against double-resume:
-    /// the waiter is removed from the registry before resuming.
-    private func resumeSheetDismissWaiter(id: UUID) {
-        if let continuation = sheetDismissWaiters.removeValue(forKey: id) {
-            continuation.resume()
-        }
-    }
 }
 
 // MARK: - ================================
@@ -1089,18 +866,6 @@ extension KVAppRouter {
         return true
     }
 
-    /// Apply all middlewares for a dismiss operation.
-    /// - Parameters:
-    ///   - sheet: The sheet being dismissed (nil if not a sheet dismiss).
-    ///   - fullCover: The full cover being dismissed (nil if not a full cover dismiss).
-    /// - Returns: `true` if all middlewares allow the dismiss, `false` to cancel.
-    private func applyDismissMiddlewares(sheet: KVSheetRoute?, fullCover: KVFullCoverRoute?) async -> Bool {
-        for middleware in middlewares {
-            let allowed = await middleware.willDismiss(sheet: sheet, fullCover: fullCover)
-            if !allowed { return false }
-        }
-        return true
-    }
 }
 
 // MARK: - ================================

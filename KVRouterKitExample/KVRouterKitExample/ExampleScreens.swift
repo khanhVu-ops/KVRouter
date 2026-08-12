@@ -209,19 +209,25 @@ struct LoginView: View {
 
 // MARK: - Modals
 
+// Modals use plain SwiftUI: `@Environment(\.dismiss)` to close, and a binding
+// back to the presenter to ask for a follow-up cover. The router is not
+// involved — it manages the navigation stack only.
+
 struct SettingsSheetView: View {
-    @Environment(\.router) private var router
+    @Environment(\.dismiss) private var dismiss
+
+    /// Set before dismissing to have the presenter open the cover afterwards.
+    @Binding var presentCoverOnDismiss: Bool
 
     var body: some View {
         NavigationStack {
             List {
-                Button("Dismiss") { router.dismissSheet() }
+                Button("Dismiss") { dismiss() }
                 Button("Dismiss, then present full cover") {
-                    // presentFullCover dismisses the current sheet and waits
-                    // for the dismissal animation before presenting.
-                    router.presentFullCover { OnboardingCoverView() }
+                    presentCoverOnDismiss = true
+                    dismiss()
                 }
-                Text("Tip: swipe down — the router cleans up the sheet's builder automatically.")
+                Text("Swipe down works too — the presenter's onDismiss decides what happens next.")
             }
             .navigationTitle("Sheet")
         }
@@ -229,7 +235,7 @@ struct SettingsSheetView: View {
 }
 
 struct OnboardingCoverView: View {
-    @Environment(\.router) private var router
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 24) {
@@ -237,7 +243,7 @@ struct OnboardingCoverView: View {
                 .font(.system(size: 72))
             Text("Full Screen Cover")
                 .font(.title.bold())
-            Button("Dismiss") { router.dismissFull() }
+            Button("Dismiss") { dismiss() }
                 .buttonStyle(.borderedProminent)
         }
     }

@@ -12,6 +12,12 @@ struct ContentView: View {
     @Environment(\.router) private var router
     @ObservedObject private var session = Session.shared
 
+    // Modals are the app's own state now — KVRouterKit manages the navigation
+    // stack only, and SwiftUI already models presentation declaratively.
+    @State private var showsSettingsSheet = false
+    @State private var showsOnboardingCover = false
+    @State private var coverFollowsSheet = false
+
     var body: some View {
         List {
             Section("Transition gallery") {
@@ -39,18 +45,16 @@ struct ContentView: View {
                 }
             }
 
-            Section("Modal") {
+            Section("Modal — plain SwiftUI") {
                 Button("Present sheet") {
-                    router.presentSheet { SettingsSheetView() }
+                    showsSettingsSheet = true
                 }
                 Button("Present full screen cover") {
-                    router.presentFullCover { OnboardingCoverView() }
+                    showsOnboardingCover = true
                 }
                 Button("Sheet → full cover (safe transition)") {
-                    router.presentSheet { SettingsSheetView() }
-                    // Queued right behind: the router dismisses the sheet and
-                    // waits for the dismissal to finish before covering.
-                    router.presentFullCover { OnboardingCoverView() }
+                    coverFollowsSheet = true
+                    showsSettingsSheet = true
                 }
             }
 
@@ -68,6 +72,20 @@ struct ContentView: View {
             }
         }
         .navigationTitle("KVRouterKit Demo")
+        // Recipe for sheet → full cover: SwiftUI cannot present a cover while a
+        // sheet is up, so chain it from `onDismiss` — that fires once the
+        // dismissal actually finishes, with no timing guesswork.
+        .sheet(isPresented: $showsSettingsSheet) {
+            if coverFollowsSheet {
+                coverFollowsSheet = false
+                showsOnboardingCover = true
+            }
+        } content: {
+            SettingsSheetView(presentCoverOnDismiss: $coverFollowsSheet)
+        }
+        .fullScreenCover(isPresented: $showsOnboardingCover) {
+            OnboardingCoverView()
+        }
     }
 }
 

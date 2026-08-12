@@ -203,7 +203,6 @@ final class KVAppRouterTests: XCTestCase {
     private struct DenyAllMiddleware: KVRouteMiddleware {
         func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? { nil }
         func willPop(from: KVAppRoute?, to: KVAppRoute?) async -> Bool { false }
-        func willDismiss(sheet: KVSheetRoute?, fullCover: KVFullCoverRoute?) async -> Bool { false }
     }
 
     func testMiddlewareRedirectsRoute() async {
@@ -221,39 +220,6 @@ final class KVAppRouterTests: XCTestCase {
         XCTAssertTrue(router.path.isEmpty)
     }
 
-    func testMiddlewareCancelsSheetDismiss() async {
-        let router = KVAppRouter(middlewares: [DenyAllMiddleware()])
-        router.presentSheet { Text("Sheet") }
-        await waitUntil { router.sheet != nil }
-
-        router.dismissSheet()
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertNotNil(router.sheet, "Dismiss middleware returning false should keep the sheet presented")
-    }
-
-    // MARK: - Sheets & Full Covers
-
-    func testPresentAndDismissSheet() async {
-        let router = KVAppRouter()
-        router.presentSheet { Text("Sheet") }
-        await waitUntil { router.sheet != nil }
-        XCTAssertNotNil(router.sheet)
-
-        router.dismissSheet()
-        await waitUntil { router.sheet == nil }
-        XCTAssertNil(router.sheet)
-    }
-
-    func testPresentFullCoverDismissesSheetFirst() async {
-        let router = KVAppRouter()
-        router.presentSheet { Text("Sheet") }
-        await waitUntil { router.sheet != nil }
-
-        router.presentFullCover { Text("Cover") }
-        await waitUntil { router.fullCover != nil }
-        XCTAssertNil(router.sheet)
-        XCTAssertNotNil(router.fullCover)
-    }
 
     // MARK: - Deep Link
 

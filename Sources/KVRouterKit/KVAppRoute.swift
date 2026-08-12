@@ -52,66 +52,6 @@ public enum KVAppRoute: Hashable, Codable, Sendable {
     }
 }
 
-// MARK: - ================================
-// MARK: Sheet Routes (Modal)
-// MARK: ================================
-
-/// Routes for `.sheet` modal presentation.
-///
-/// **Usage:**
-/// ```swift
-/// router.present(.customSheet(id))
-/// router.presentSheet { CustomSheetView() }
-/// ```
-public enum KVSheetRoute: Hashable, Identifiable, Codable {
-
-    // MARK: - Dynamic Sheets
-    /// Generic slot for sheets built dynamically at runtime.
-    case customSheet(UUID)
-
-    // MARK: - App Sheets (Add your sheets here)
-    // Example sheets for future implementation:
-    // case settings
-    // case languagePicker
-    // case share(content: ShareContent)
-
-    // MARK: - Identifiable
-    public var id: String {
-        switch self {
-        case .customSheet(let uuid):
-            return "sheet_\(uuid.uuidString)"
-        }
-    }
-}
-
-// MARK: - ================================
-// MARK: Full Screen Cover Routes
-// MARK: ================================
-
-/// Routes for `.fullScreenCover` presentation.
-///
-/// **Usage:**
-/// ```swift
-/// router.presentFull(.customFullCover(id))
-/// router.presentFullCover { CustomFullScreenView() }
-/// ```
-public enum KVFullCoverRoute: Hashable, Identifiable, Codable {
-
-    // MARK: - Dynamic Full Covers
-    /// Generic slot for full covers built dynamically at runtime.
-    case customFullCover(UUID)
-
-    // MARK: - App Full Covers (Add your full covers here)
-    // Example full covers for future implementation:
-    // case onboarding
-    // case premium
-    // case authentication
-
-    // MARK: - Identifiable
-    public var id: String {
-        switch self {
-        case .customFullCover(let uuid):
-            return "fullCover_\(uuid.uuidString)"
-        }
-    }
-}
+// Modals are not the router's concern: use SwiftUI's own `.sheet` and
+// `.fullScreenCover`. See the "Modal" section of the example app for the
+// sheet-then-cover recipe.
