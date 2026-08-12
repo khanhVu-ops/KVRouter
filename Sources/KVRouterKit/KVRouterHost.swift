@@ -139,8 +139,11 @@ public struct KVRouterHost<Root: View>: View {
     }
 }
 
+/// Not an `@ObservedObject` on purpose: the destination map is a pure function
+/// of the entry SwiftUI hands back, so observing the router here would rebuild
+/// every live destination on any unrelated router change (e.g. a sheet).
 private struct KVRouterRootDestinations<Root: View>: View {
-    @ObservedObject var router: KVAppRouter
+    let router: KVAppRouter
     let coordinator: KVTransitionCoordinator
     let defaultTransition: KVNavigationTransition
     let namespace: Namespace.ID
@@ -161,7 +164,7 @@ private struct KVRouterRootDestinations<Root: View>: View {
 }
 
 private struct KVRouterDestinationContent: View {
-    @ObservedObject var router: KVAppRouter
+    let router: KVAppRouter
     let coordinator: KVTransitionCoordinator
     let entry: KVNavigationEntry
     let transition: KVNavigationTransition
@@ -183,7 +186,7 @@ private struct KVRouterDestinationContent: View {
 }
 
 private struct KVRouterSheetContent: View {
-    @ObservedObject var router: KVAppRouter
+    let router: KVAppRouter
     let sheet: KVSheetRoute
 
     var body: some View {
@@ -192,7 +195,7 @@ private struct KVRouterSheetContent: View {
 }
 
 private struct KVRouterFullCoverContent: View {
-    @ObservedObject var router: KVAppRouter
+    let router: KVAppRouter
     let cover: KVFullCoverRoute
 
     var body: some View {

@@ -59,18 +59,17 @@ public final class KVAppRouter: ObservableObject {
 
     // MARK: - Observation Backing
 
-    /// `ObservationRegistrar` on iOS 17+, `nil` on iOS 16.
-    /// Stored as `Any?` because the registrar type itself requires iOS 17.
-    private let _registrar: Any? = {
-        if #available(iOS 17.0, *) { return ObservationRegistrar() }
-        return nil
+    /// Resolved once at init. Every property access then goes through one
+    /// existential dispatch instead of an `if #available` plus an
+    /// `as? ObservationRegistrar` unbox on the hot path.
+    private let observation: any KVObservationStrategy = {
+        if #available(iOS 17.0, *) { return KVModernObservation() }
+        return KVLegacyObservation()
     }()
 
     /// Report a property read to the Observation system (iOS 17+, no-op on iOS 16).
     private func trackAccess<Member>(_ keyPath: KeyPath<KVAppRouter, Member>) {
-        if #available(iOS 17.0, *) {
-            (_registrar as? ObservationRegistrar)?.access(self, keyPath: keyPath)
-        }
+        observation.access(self, keyPath: keyPath)
     }
 
     /// Run a mutation, notifying both observation systems:
@@ -81,11 +80,7 @@ public final class KVAppRouter: ObservableObject {
         _ mutation: () -> Void
     ) {
         objectWillChange.send()
-        if #available(iOS 17.0, *), let registrar = _registrar as? ObservationRegistrar {
-            registrar.withMutation(of: self, keyPath: keyPath, mutation)
-        } else {
-            mutation()
-        }
+        observation.withMutation(self, keyPath: keyPath, mutation)
     }
 
     // MARK: - Navigation State
@@ -284,6 +279,63 @@ public final class KVAppRouter: ObservableObject {
             transitionOverrides[entry.id] = nil
             cleanupBuilder(for: entry.route)
         }
+    }
+}
+
+// MARK: - ================================
+// MARK: Observation Strategy
+// MARK: ================================
+
+/// Picks an observation backend once, at init, so the availability check never
+/// runs on a property access. `KVLegacyObservation` is a pure no-op: on iOS 16
+/// `objectWillChange` (sent by ``KVAppRouter/withTrackedMutation(_:_:)``) is the
+/// only channel, which is what `@ObservedObject` / `@StateObject` listen to.
+@MainActor
+private protocol KVObservationStrategy: AnyObject {
+    func access<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>
+    )
+
+    func withMutation<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>,
+        _ mutation: () -> Void
+    )
+}
+
+@available(iOS 17.0, *)
+private final class KVModernObservation: KVObservationStrategy {
+    private let registrar = ObservationRegistrar()
+
+    func access<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>
+    ) {
+        registrar.access(router, keyPath: keyPath)
+    }
+
+    func withMutation<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>,
+        _ mutation: () -> Void
+    ) {
+        registrar.withMutation(of: router, keyPath: keyPath, mutation)
+    }
+}
+
+private final class KVLegacyObservation: KVObservationStrategy {
+    func access<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>
+    ) {}
+
+    func withMutation<Member>(
+        _ router: KVAppRouter,
+        keyPath: KeyPath<KVAppRouter, Member>,
+        _ mutation: () -> Void
+    ) {
+        mutation()
     }
 }
 
@@ -555,7 +607,7 @@ extension KVAppRouter {
     public func popTo(_ route: KVAppRoute) {
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self.path.firstIndex(of: route) else { return }
+            guard let index = self._navigationEntries.firstIndex(where: { $0.route == route }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -566,7 +618,7 @@ extension KVAppRouter {
     public func popTo(where predicate: @escaping (KVAppRoute) -> Bool) {
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self.path.lastIndex(where: predicate) else { return }
+            guard let index = self._navigationEntries.lastIndex(where: { predicate($0.route) }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -584,7 +636,8 @@ extension KVAppRouter {
     public func popTo(tag: String) {
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self.path.dropLast().lastIndex(where: { self.route($0, matchesTag: tag) }) else { return }
+            guard let index = self._navigationEntries.dropLast()
+                .lastIndex(where: { self.route($0.route, matchesTag: tag) }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -606,7 +659,8 @@ extension KVAppRouter {
         let typeName = String(reflecting: V.self)
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self.path.dropLast().lastIndex(where: { self.route($0, matchesViewType: typeName) }) else { return }
+            guard let index = self._navigationEntries.dropLast()
+                .lastIndex(where: { self.route($0.route, matchesViewType: typeName) }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -661,10 +715,10 @@ extension KVAppRouter {
     public func pop(count: Int) {
         enqueue { [weak self] in
             guard let self else { return }
-            let removeCount = min(count, self.path.count)
+            let removeCount = min(count, self._navigationEntries.count)
             guard removeCount > 0 else { return }
             guard let fromEntry = self.navigationEntries.last else { return }
-            let targetIndex = self.path.count - removeCount
+            let targetIndex = self._navigationEntries.count - removeCount
             let toEntry = targetIndex > 0 ? self.navigationEntries[targetIndex - 1] : nil
             guard await self.applyPopMiddlewares(from: fromEntry.route, to: toEntry?.route) else { return }
             self.isRouterControlledPop = true
@@ -958,9 +1012,11 @@ extension KVAppRouter {
         let waiterID = UUID()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sheetDismissWaiters[waiterID] = continuation
-            Task { @MainActor [weak self] in
+            // Strong `self`: the timeout task is the only guaranteed resume path,
+            // so letting the router deallocate first would leak the continuation.
+            Task { @MainActor in
                 try? await Task.sleep(nanoseconds: timeout)
-                self?.resumeSheetDismissWaiter(id: waiterID)
+                self.resumeSheetDismissWaiter(id: waiterID)
             }
         }
     }
@@ -984,7 +1040,7 @@ extension KVAppRouter {
     /// - Parameter route: The route to process.
     /// - Returns: The transformed route, or nil if cancelled.
     private func applyMiddlewares(to route: KVAppRoute) async -> KVAppRoute? {
-        let fromRoute: KVAppRoute? = path.last
+        let fromRoute: KVAppRoute? = _navigationEntries.last?.route
         var candidate: KVAppRoute? = route
 
         for middleware in middlewares {
@@ -1042,28 +1098,14 @@ private extension KVAppRouter {
         }
     }
 
-    /// Clean up the top builder if it's a custom view.
-    func cleanupTopBuilderIfNeeded() {
-        if let last = path.last, case let .customView(id) = last {
-            removeCustomView(id)
-        }
-    }
-
-    /// Clean up builders for routes from a starting index.
-    func cleanupBuilders(from startIndex: Int) {
-        for i in startIndex..<path.count {
-            cleanupBuilder(for: path[i])
-        }
-    }
-
     /// Clean up builders no longer in the new path.
     func cleanupOrphanedBuilders(newPath: [KVAppRoute]) {
         let newIDs = Set(newPath.compactMap { route -> UUID? in
             if case let .customView(id) = route { return id }
             return nil
         })
-        let currentIDs = Set(path.compactMap { route -> UUID? in
-            if case let .customView(id) = route { return id }
+        let currentIDs = Set(_navigationEntries.compactMap { entry -> UUID? in
+            if case let .customView(id) = entry.route { return id }
             return nil
         })
         currentIDs.subtracting(newIDs).forEach { removeCustomView($0) }
