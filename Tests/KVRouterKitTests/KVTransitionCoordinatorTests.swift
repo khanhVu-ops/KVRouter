@@ -1,4 +1,5 @@
 import XCTest
+import KVRouterCore
 @testable import KVRouterKit
 
 @MainActor
@@ -76,7 +77,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
 
         let coordinator = KVTransitionCoordinator(defaultTransition: .system)
         coordinator.hasSource = { $0 == AnyHashable("card") }
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
 
         await coordinator.perform(
             KVTransitionRequest(
@@ -105,7 +106,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
     func testLegacyZoomPopDefersMissingSourceFallbackToAnimator() {
         let coordinator = KVTransitionCoordinator(defaultTransition: .system)
         coordinator.hasSource = { _ in false }
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
         let request = KVTransitionRequest(
             operation: .pop,
             from: entry,
@@ -136,7 +137,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
 
         coordinator.synchronizeControllerMetadata(in: navigationController)
@@ -165,7 +166,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         coordinator.synchronizeControllerMetadata(in: navigationController)
 
@@ -192,7 +193,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         coordinator.synchronizeControllerMetadata(in: navigationController)
 
@@ -223,7 +224,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         coordinator.synchronizeControllerMetadata(in: navigationController)
 
@@ -247,7 +248,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
         let coordinator = KVTransitionCoordinator(defaultTransition: .system)
         coordinator.router = router
         coordinator.hasSource = { $0 == AnyHashable("card") }
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
 
         await coordinator.perform(
             KVTransitionRequest(
@@ -286,7 +287,7 @@ final class KVTransitionCoordinatorTests: XCTestCase {
         KVTransitionRequest(
             operation: .push,
             from: nil,
-            to: KVNavigationEntry(route: .appFeature("detail")),
+            to: KVNavigationEntry(route: TestRoute.screen("detail")),
             transitionOverride: transition
         )
     }

@@ -54,7 +54,7 @@ public extension EnvironmentValues {
     ///
     ///     var body: some View {
     ///         Button("Go to Profile") {
-    ///             router.push(.appFeature("profile"))
+    ///             router.push(ProfileRoute.me)
     ///         }
     ///     }
     /// }

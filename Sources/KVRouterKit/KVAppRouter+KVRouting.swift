@@ -2,86 +2,66 @@
 //  KVAppRouter+KVRouting.swift
 //  KVRouterKit
 //
-//  Wires the concrete router to the `KVRouting` port so a ViewModel can depend
-//  on the port and be tested against `KVRouterSpy`.
-//
 
 import SwiftUI
 import KVRouterCore
 
 // MARK: - ================================
-// MARK: Transitional Route Conformance
+// MARK: View-Layer Port
 // MARK: ================================
 
-/// Scaffolding, not a compatibility shim: it lets ``KVAppRouter`` satisfy
-/// ``KVRouting`` while the stack is still built on ``KVAppRoute``. Phase 3
-/// replaces the stack with `AnyKVRoute` and deletes ``KVAppRoute`` — this
-/// conformance goes with it.
-extension KVAppRoute: KVRoute {}
+/// Everything ``KVRouting`` has, plus the commands that only make sense where
+/// views exist: building a destination inline, and choosing an animation.
+///
+/// Inject `any KVRouting` into a ViewModel and `any KVViewRouting` into view
+/// code. Both are mockable; the narrower one is what keeps SwiftUI out of the
+/// presentation layer.
+@MainActor
+public protocol KVViewRouting: KVRouting {
+
+    func push(_ route: any KVRoute, transition: KVNavigationTransition)
+
+    func replaceTop(with route: any KVRoute, transition: KVNavigationTransition)
+
+    func pushView<V: View>(tag: String?, _ build: @escaping () -> V)
+
+    func pushView<V: View>(
+        tag: String?,
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    )
+
+    func replaceTopWithView<V: View>(tag: String?, _ build: @escaping () -> V)
+
+    /// Pop back to the nearest screen below pushed with this tag.
+    ///
+    /// Tags come from `pushView(tag:)`, which is why this is here rather than on
+    /// ``KVRouting``: a typed route needs no tag, `popTo(_:)` already finds it.
+    func popTo(tag: String)
+
+    /// Pop back to the nearest screen below built from this view type.
+    func popTo<V: View>(_ viewType: V.Type)
+}
 
 // MARK: - ================================
-// MARK: KVRouting Conformance
+// MARK: Conformance
 // MARK: ================================
 
-extension KVAppRouter: KVRouting {
+// The declarations live on `KVAppRouter` itself; both protocols are satisfied
+// as written, so there is nothing to bridge.
+extension KVAppRouter: KVViewRouting {
 
-    // MARK: - State
-
+    /// Number of screens above the root.
+    ///
+    /// - Important: A snapshot, not an observable property.
     public var stackDepth: Int {
         navigationEntries.count
     }
 
-    public var topRoute: (any KVRoute)? {
-        navigationEntries.last?.route
-    }
-
-    // MARK: - Push
-
-    public func push(_ route: any KVRoute) {
-        guard let route = Self.appRoute(from: route) else { return }
-        push(route)
-    }
-
-    public func replaceTop(with route: any KVRoute) {
-        guard let route = Self.appRoute(from: route) else { return }
-        replaceTop(with: route)
-    }
-
-    public func setPath(_ routes: [any KVRoute]) {
-        setPath(routes.compactMap(Self.appRoute(from:)))
-    }
-
-    // MARK: - Pop
-
-    public func popTo(_ route: any KVRoute) {
-        guard let route = Self.appRoute(from: route) else { return }
-        popTo(route)
-    }
-
-    public func popTo(where predicate: @escaping (any KVRoute) -> Bool) {
-        popTo(where: { (route: KVAppRoute) in predicate(route) })
-    }
-
-    // `pop()`, `pop(count:)` and `popToRoot()` carry no route, so the
-    // declarations on `KVAppRouter` satisfy the protocol as they stand.
-
-    // MARK: - Bridging
-
-    /// Narrows a type-erased route to the enum the stack is still built on.
+    /// The route on top of the stack, or `nil` at the root.
     ///
-    /// Until Phase 3 lands, ``KVAppRoute`` is the only concrete route the
-    /// router can store. Anything else is a programmer error rather than a
-    /// runtime condition to absorb, hence the assertion: silently dropping the
-    /// navigation would be far harder to diagnose than a debug crash.
-    private static func appRoute(from route: any KVRoute) -> KVAppRoute? {
-        if let route = route as? KVAppRoute { return route }
-        assertionFailure(
-            """
-            KVAppRouter cannot yet route \(type(of: route)). Until the typed \
-            route model lands, only KVAppRoute values can be pushed through \
-            the KVRouting port.
-            """
-        )
-        return nil
+    /// - Important: A snapshot, not an observable property.
+    public var topRoute: (any KVRoute)? {
+        navigationEntries.last?.route.base
     }
 }

@@ -1,5 +1,6 @@
 import UIKit
 import XCTest
+import KVRouterCore
 @testable import KVRouterKit
 
 @MainActor
@@ -55,7 +56,7 @@ final class KVInteractivePopGestureTests: XCTestCase {
         fixture.coordinator.completePendingTransition(cancelled: false)
         fixture.coordinator.completePendingTransition(cancelled: false)
 
-        XCTAssertEqual(fixture.router.path, [.appFeature("a")])
+        XCTAssertEqual(fixture.router.path, [.screen("a")])
     }
 
     func testMiddlewareDenialCancelsInteractivePop() async {
@@ -99,7 +100,7 @@ final class KVInteractivePopGestureTests: XCTestCase {
         percentDriven: RecordingPercentDrivenTransition
     ) {
         let router = KVAppRouter(middlewares: middlewares)
-        router.path = [.appFeature("a"), .appFeature("b")]
+        router.path = [.screen("a"), .screen("b")]
         let coordinator = KVTransitionCoordinator(defaultTransition: .depth)
         coordinator.router = router
         let navigationController = RecordingNavigationController()
@@ -124,13 +125,13 @@ final class KVInteractivePopGestureTests: XCTestCase {
 
 private struct DenyPopMiddleware: KVRouteMiddleware {
     func willNavigate(
-        from: KVAppRoute?,
-        to: KVAppRoute
-    ) async -> KVAppRoute? {
+        from: (any KVRoute)?,
+        to: any KVRoute
+    ) async -> (any KVRoute)? {
         to
     }
 
-    func willPop(from: KVAppRoute?, to: KVAppRoute?) async -> Bool {
+    func willPop(from: (any KVRoute)?, to: (any KVRoute)?) async -> Bool {
         false
     }
 }

@@ -39,7 +39,9 @@ public struct KVRouterHost<Root: View>: View {
             .if(ignoreKeyboard) { view in
                 view.ignoresSafeArea(.keyboard)
             }
-            .onOpenURL { router.handle(url: $0) }
+            // Deep links are the app's to parse: map the URL to your own routes
+            // and call `setPath`/`push` from your own `.onOpenURL`. The router
+            // has no opinion about URL shapes.
             .onAppear {
                 coordinator.sourceRegistry = sourceRegistry
                 coordinator.reduceMotion = reduceMotion
@@ -133,17 +135,41 @@ private struct KVRouterDestinationContent: View {
     let transition: KVNavigationTransition
     let namespace: Namespace.ID
 
+    @Environment(\.kvRouteRegistry) private var registry
+
     @ViewBuilder
     var body: some View {
         if #available(iOS 18.0, *),
            coordinator.usesNativeZoom(for: entry),
            case .zoom(let sourceID) = transition.kind {
-            router.buildView(for: entry)
+            destination
                 .navigationTransition(
                     .zoom(sourceID: sourceID, in: namespace)
                 )
         } else {
-            router.buildView(for: entry)
+            destination
+        }
+    }
+
+    /// Dynamic screens carry their builder in the router; everything else comes
+    /// from the registry the composition root declared.
+    @ViewBuilder
+    private var destination: some View {
+        if let dynamic = entry.route.unwrap(KVDynamicViewRoute.self) {
+            router.dynamicView(for: dynamic) ?? AnyView(EmptyView())
+        } else if let view = registry?.view(for: entry.route.base) {
+            view
+        } else {
+            // An unregistered route is a wiring mistake, not a runtime state to
+            // absorb: crash in debug rather than render a blank screen that
+            // leaves nothing to diagnose.
+            let _ = assertionFailure(
+                """
+                No destination registered for \(type(of: entry.route.base)). \
+                Register it with .kvRoutes { $0.register(...) } on KVRouterHost.
+                """
+            )
+            EmptyView()
         }
     }
 }

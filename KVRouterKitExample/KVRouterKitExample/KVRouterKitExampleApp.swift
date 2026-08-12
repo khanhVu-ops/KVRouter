@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import KVRouterCore
 import KVRouterKit
 
 @main
@@ -19,23 +20,6 @@ struct KVRouterKitExampleApp: App {
             KVLoggingMiddleware(),
         ])
 
-        // Map stable feature ids to screens in the app target.
-        router.appFeatureViewBuilder = { id in
-            switch id {
-            case "profile": return AnyView(ProfileView())
-            case "premium": return AnyView(PremiumView())
-            case "login": return AnyView(LoginView())
-            default: return nil
-            }
-        }
-
-        // Map deep-link payloads (e.g. kvrouter://detail/42) to screens.
-        router.deepLinkViewBuilder = { payload in
-            guard payload.hasPrefix("detail/"),
-                  let number = Int(payload.dropFirst("detail/".count)) else { return nil }
-            return AnyView(DetailView(number: number))
-        }
-
         _router = StateObject(wrappedValue: router)
     }
 
@@ -43,6 +27,24 @@ struct KVRouterKitExampleApp: App {
         WindowGroup {
             KVRouterHost(router: router) {
                 ContentView()
+            }
+            // Composition root: the only place that knows both routes and views.
+            .kvRoutes { routes in
+                routes.register(AppRoute.self) { route in
+                    switch route {
+                    case .profile:              ProfileView()
+                    case .premium:              PremiumView()
+                    case .login:                LoginView()
+                    case .detail(let number):   DetailView(number: number)
+                    }
+                }
+            }
+            // Deep links are the app's to parse — the router has no opinion
+            // about URL shapes.
+            .onOpenURL { url in
+                if let route = AppDeepLink.route(for: url) {
+                    router.push(route)
+                }
             }
         }
     }
@@ -56,12 +58,34 @@ final class Session: ObservableObject {
     @Published var isLoggedIn = false
 }
 
-/// Redirects navigation to "premium" over to the login screen while logged out.
+/// Redirects navigation to premium over to the login screen while logged out.
 struct AuthMiddleware: KVRouteMiddleware {
-    func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? {
-        if case .appFeature("premium") = to, !Session.shared.isLoggedIn {
-            return .appFeature("login")
+    func willNavigate(from: (any KVRoute)?, to: any KVRoute) async -> (any KVRoute)? {
+        if (to as? AppRoute) == .premium, !Session.shared.isLoggedIn {
+            return AppRoute.login
         }
         return to
+    }
+}
+
+// MARK: - Routes
+
+/// The app's routes: a plain value type with no view in sight. Which view each
+/// case renders as is declared once, in the `.kvRoutes` registry above.
+enum AppRoute: KVRoute {
+    case profile
+    case premium
+    case login
+    case detail(number: Int)
+}
+
+/// URL → route. A pure function, so it is testable without a router.
+enum AppDeepLink {
+    /// Handles `kvrouter://detail/42`.
+    static func route(for url: URL) -> (any KVRoute)? {
+        guard url.host == "detail" else { return nil }
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard let number = components.first.flatMap(Int.init) else { return nil }
+        return AppRoute.detail(number: number)
     }
 }

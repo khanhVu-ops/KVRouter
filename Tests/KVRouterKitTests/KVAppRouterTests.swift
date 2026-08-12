@@ -4,6 +4,7 @@
 //
 
 import XCTest
+import KVRouterCore
 import SwiftUI
 @testable import KVRouterKit
 
@@ -26,27 +27,27 @@ final class KVAppRouterTests: XCTestCase {
 
     func testPushAppendsRoute() async {
         let router = KVAppRouter()
-        router.push(.appFeature("home"))
-        await waitUntil { router.path == [.appFeature("home")] }
-        XCTAssertEqual(router.path, [.appFeature("home")])
+        router.push(TestRoute.screen("home"))
+        await waitUntil { router.path == [.screen("home")] }
+        XCTAssertEqual(router.path, [.screen("home")])
     }
 
     func testPopRemovesTopRoute() async {
         let router = KVAppRouter()
-        router.push(.appFeature("a"))
-        router.push(.appFeature("b"))
+        router.push(TestRoute.screen("a"))
+        router.push(TestRoute.screen("b"))
         await waitUntil { router.path.count == 2 }
 
         router.pop()
         await waitUntil { router.path.count == 1 }
-        XCTAssertEqual(router.path, [.appFeature("a")])
+        XCTAssertEqual(router.path, [.screen("a")])
     }
 
     func testPopToRootClearsPath() async {
         let router = KVAppRouter()
-        router.push(.appFeature("a"))
-        router.push(.appFeature("b"))
-        router.push(.appFeature("c"))
+        router.push(TestRoute.screen("a"))
+        router.push(TestRoute.screen("b"))
+        router.push(TestRoute.screen("c"))
         await waitUntil { router.path.count == 3 }
 
         router.popToRoot()
@@ -56,32 +57,32 @@ final class KVAppRouterTests: XCTestCase {
 
     func testPopToSpecificRoute() async {
         let router = KVAppRouter()
-        router.setPath([.appFeature("a"), .appFeature("b"), .appFeature("c")])
+        router.setPath([TestRoute.screen("a"), .screen("b"), .screen("c")])
         await waitUntil { router.path.count == 3 }
 
-        router.popTo(.appFeature("a"))
+        router.popTo(TestRoute.screen("a"))
         await waitUntil { router.path.count == 1 }
-        XCTAssertEqual(router.path, [.appFeature("a")])
+        XCTAssertEqual(router.path, [.screen("a")])
     }
 
     func testPopCount() async {
         let router = KVAppRouter()
-        router.setPath([.appFeature("a"), .appFeature("b"), .appFeature("c")])
+        router.setPath([TestRoute.screen("a"), .screen("b"), .screen("c")])
         await waitUntil { router.path.count == 3 }
 
         router.pop(count: 2)
         await waitUntil { router.path.count == 1 }
-        XCTAssertEqual(router.path, [.appFeature("a")])
+        XCTAssertEqual(router.path, [.screen("a")])
     }
 
     func testReplaceTop() async {
         let router = KVAppRouter()
-        router.push(.appFeature("a"))
+        router.push(TestRoute.screen("a"))
         await waitUntil { router.path.count == 1 }
 
-        router.replaceTop(with: .appFeature("b"))
-        await waitUntil { router.path == [.appFeature("b")] }
-        XCTAssertEqual(router.path, [.appFeature("b")])
+        router.replaceTop(with: TestRoute.screen("b"))
+        await waitUntil { router.path == [.screen("b")] }
+        XCTAssertEqual(router.path, [.screen("b")])
     }
 
     // MARK: - Pop to Specific Screen (tag / view type)
@@ -91,7 +92,7 @@ final class KVAppRouterTests: XCTestCase {
 
     func testPopToTagTargetsDynamicView() async {
         let router = KVAppRouter()
-        router.push(.appFeature("home"))
+        router.push(TestRoute.screen("home"))
         router.pushView(tag: "detail") { ScreenA() }
         router.pushView { ScreenB() }
         router.pushView { ScreenB() }
@@ -100,19 +101,26 @@ final class KVAppRouterTests: XCTestCase {
         router.popTo(tag: "detail")
         await waitUntil { router.path.count == 2 }
         XCTAssertEqual(router.path.count, 2, "Should pop back to the tagged screen")
-        XCTAssertEqual(router.path.first, .appFeature("home"))
+        XCTAssertEqual(router.path.first, .screen("home"))
     }
 
-    func testPopToTagMatchesAppFeature() async {
+    /// Tags belong to `pushView`. In 2.x `popTo(tag:)` also matched a typed
+    /// route whose id equalled the tag; 3.0 drops that overlap — a typed route
+    /// is a value, so `popTo(_:)` addresses it directly and needs no tag.
+    func testPopToTagIgnoresTypedRoutes() async {
         let router = KVAppRouter()
-        router.push(.appFeature("home"))
+        router.push(TestRoute.screen("home"))
         router.pushView { ScreenA() }
         router.pushView { ScreenB() }
         await waitUntil { router.path.count == 3 }
 
         router.popTo(tag: "home")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(router.path.count, 3, "A typed route must not answer to a tag")
+
+        router.popTo(TestRoute.screen("home"))
         await waitUntil { router.path.count == 1 }
-        XCTAssertEqual(router.path, [.appFeature("home")])
+        XCTAssertEqual(router.path, [.screen("home")])
     }
 
     func testPopToTagNotFoundDoesNothing() async {
@@ -163,11 +171,11 @@ final class KVAppRouterTests: XCTestCase {
         XCTAssertEqual(router.path.count, 1)
     }
 
-    func testRestorePathDropsCustomViewRoutes() async {
-        let router = KVAppRouter()
-        router.restorePath([.appFeature("a"), .customView(UUID()), .appFeature("b")])
-        await waitUntil { router.path.count == 2 }
-        XCTAssertEqual(router.path, [.appFeature("a"), .appFeature("b")])
+    /// `pushView` screens hold their view as a closure in memory, so they must
+    /// never be able to claim they survive persistence.
+    func testDynamicViewRoutesAreNotRestorable() {
+        XCTAssertFalse(KVDynamicViewRoute.self is any KVRestorableRoute.Type)
+        XCTAssertTrue(TestRestorableRoute.self is any KVRestorableRoute.Type)
     }
 
     // MARK: - Operation Ordering
@@ -175,8 +183,8 @@ final class KVAppRouterTests: XCTestCase {
     /// Middleware that is slow only for the first route — without the FIFO
     /// operation queue, the second push would land before the first.
     private struct SlowFirstMiddleware: KVRouteMiddleware {
-        func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? {
-            if to == .appFeature("slow") {
+        func willNavigate(from: (any KVRoute)?, to: any KVRoute) async -> (any KVRoute)? {
+            if (to as? TestRoute) == .screen("slow") {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
             return to
@@ -185,59 +193,38 @@ final class KVAppRouterTests: XCTestCase {
 
     func testConsecutivePushesKeepOrderWithAsyncMiddleware() async {
         let router = KVAppRouter(middlewares: [SlowFirstMiddleware()])
-        router.push(.appFeature("slow"))
-        router.push(.appFeature("fast"))
+        router.push(TestRoute.screen("slow"))
+        router.push(TestRoute.screen("fast"))
         await waitUntil { router.path.count == 2 }
-        XCTAssertEqual(router.path, [.appFeature("slow"), .appFeature("fast")])
+        XCTAssertEqual(router.path, [.screen("slow"), .screen("fast")])
     }
 
     // MARK: - Middleware
 
     private struct RedirectMiddleware: KVRouteMiddleware {
-        func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? {
-            if to == .appFeature("blocked") { return .appFeature("login") }
+        func willNavigate(from: (any KVRoute)?, to: any KVRoute) async -> (any KVRoute)? {
+            if (to as? TestRoute) == .screen("blocked") { return TestRoute.screen("login") }
             return to
         }
     }
 
     private struct DenyAllMiddleware: KVRouteMiddleware {
-        func willNavigate(from: KVAppRoute?, to: KVAppRoute) async -> KVAppRoute? { nil }
-        func willPop(from: KVAppRoute?, to: KVAppRoute?) async -> Bool { false }
+        func willNavigate(from: (any KVRoute)?, to: any KVRoute) async -> (any KVRoute)? { nil }
+        func willPop(from: (any KVRoute)?, to: (any KVRoute)?) async -> Bool { false }
     }
 
     func testMiddlewareRedirectsRoute() async {
         let router = KVAppRouter(middlewares: [RedirectMiddleware()])
-        router.push(.appFeature("blocked"))
+        router.push(TestRoute.screen("blocked"))
         await waitUntil { !router.path.isEmpty }
-        XCTAssertEqual(router.path, [.appFeature("login")])
+        XCTAssertEqual(router.path, [.screen("login")])
     }
 
     func testMiddlewareCancelsPush() async {
         let router = KVAppRouter(middlewares: [DenyAllMiddleware()])
-        router.push(.appFeature("anything"))
+        router.push(TestRoute.screen("anything"))
         // Give the scheduled task time to run, then confirm nothing was pushed.
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertTrue(router.path.isEmpty)
-    }
-
-
-    // MARK: - Deep Link
-
-    func testDeepLinkIgnoredWithoutBuilder() async {
-        let router = KVAppRouter()
-        router.handle(url: URL(string: "myapp://profile/123")!)
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertTrue(router.path.isEmpty)
-    }
-
-    func testDeepLinkPushesWhenBuilderResolves() async {
-        let router = KVAppRouter()
-        router.deepLinkViewBuilder = { payload in
-            payload.hasPrefix("profile") ? AnyView(Text("Profile")) : nil
-        }
-
-        router.handle(url: URL(string: "myapp://profile/123?ref=home")!)
-        await waitUntil { !router.path.isEmpty }
-        XCTAssertEqual(router.path, [.deepLink("profile/123?ref=home")])
     }
 }

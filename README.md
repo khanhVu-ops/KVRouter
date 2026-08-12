@@ -59,9 +59,10 @@ The package, product, target and import name are now `KVRouterKit`:
 import KVRouterKit
 ```
 
-Public router symbols remain unchanged, including `KVAppRouter`,
-`KVRouterHost`, `KVAppRoute` and the middleware protocols. Existing calls that
-do not specify a transition keep their original system-navigation behavior.
+The package ships three products: `KVRouterKit` (router plus SwiftUI host),
+`KVRouterCore` (route model and the `KVRouting` command port — no SwiftUI or
+UIKit), and `KVRouterTesting` (spies, for test targets). A presentation layer
+imports only `KVRouterCore`.
 
 ## Quick Start
 
@@ -123,13 +124,13 @@ KVRouterHost(router: router, defaultTransition: .sharedAxis()) {
     HomeView()
 }
 
-router.push(.appFeature("profile"), transition: .fade)
+router.push(ShopRoute.profile, transition: .fade)
 
 router.pushView(transition: .depth) {
     DetailView(id: 42)
 }
 
-router.replaceTop(with: .appFeature("settings"))
+router.replaceTop(with: ShopRoute.settings)
 ```
 
 The transition stored with the top entry is automatically reversed by a
@@ -250,19 +251,64 @@ only a small policy lookup per navigation mutation and adds no per-frame work.
 
 ## Typed Routes
 
-Map stable feature IDs to views in the app target:
+Declare routes wherever the navigation intent lives. They are plain values, so
+the module that owns them never imports SwiftUI:
 
 ```swift
-router.appFeatureViewBuilder = { id in
-    switch id {
-    case "profile": return AnyView(ProfileView())
-    case "settings": return AnyView(SettingsView())
-    default: return nil
+import KVRouterCore
+
+enum ShopRoute: KVRoute {
+    case productDetail(id: Int)
+    case cart
+}
+```
+
+Say what each renders as once, in the composition root:
+
+```swift
+KVRouterHost(router: router) { HomeView() }
+    .kvRoutes { routes in
+        routes.register(ShopRoute.self) { route in
+            switch route {
+            case .productDetail(let id): ProductDetailView(id: id)
+            case .cart:                  CartView()
+            }
+        }
+    }
+
+router.push(ShopRoute.productDetail(id: 42), transition: .sharedAxis())
+```
+
+An unregistered route type trips an assertion in debug builds rather than
+rendering a blank screen.
+
+## MVVM and Clean Architecture
+
+Inject `any KVRouting` — stack commands only, no SwiftUI — into a ViewModel:
+
+```swift
+final class ProductListViewModel {
+    private let router: any KVRouting
+    init(router: any KVRouting) { self.router = router }
+
+    func didTapProduct(_ id: Int) {
+        router.push(ShopRoute.productDetail(id: id))
     }
 }
-
-router.push(.appFeature("profile"), transition: .sharedAxis())
 ```
+
+Test it against `KVRouterSpy`, which is synchronous and needs no host:
+
+```swift
+import KVRouterTesting
+
+let router = KVRouterSpy()
+ProductListViewModel(router: router).didTapProduct(42)
+#expect(router.operations == [.push(AnyKVRoute(ShopRoute.productDetail(id: 42)))])
+```
+
+View code that needs `pushView { }` or a per-navigation transition takes
+`any KVViewRouting` instead — the same port plus the view-layer commands.
 
 ## Pop Targets
 
@@ -270,7 +316,7 @@ router.push(.appFeature("profile"), transition: .sharedAxis())
 router.pop()
 router.pop(count: 2)
 router.popToRoot()
-router.popTo(.appFeature("profile"))
+router.popTo(ShopRoute.cart)
 router.popTo(tag: "checkout")
 router.popTo(DetailView.self)
 router.popTo(where: { route in /* custom match */ false })
@@ -294,11 +340,11 @@ Middleware can redirect or cancel navigation and can block router-driven pops:
 ```swift
 struct AuthMiddleware: KVRouteMiddleware {
     func willNavigate(
-        from: KVAppRoute?,
-        to: KVAppRoute
-    ) async -> KVAppRoute? {
-        if case .appFeature("premium") = to, !Session.isLoggedIn {
-            return .appFeature("login")
+        from: (any KVRoute)?,
+        to: any KVRoute
+    ) async -> (any KVRoute)? {
+        if (to as? ShopRoute) == .premium, !Session.isLoggedIn {
+            return ShopRoute.login
         }
         return to
     }
@@ -309,33 +355,53 @@ struct AuthMiddleware: KVRouteMiddleware {
 
 ## Deep Links
 
+URL shapes belong to the app, so parsing is yours — which also makes it a pure
+function you can unit-test without a router:
+
 ```swift
-router.deepLinkViewBuilder = { payload in
-    guard payload.hasPrefix("profile/") else { return nil }
-    let id = String(payload.dropFirst("profile/".count))
-    return AnyView(ProfileView(id: id))
+enum AppDeepLink {
+    static func route(for url: URL) -> (any KVRoute)? {
+        guard url.host == "product",
+              let id = url.pathComponents.filter({ $0 != "/" }).first.flatMap(Int.init)
+        else { return nil }
+        return ShopRoute.productDetail(id: id)
+    }
+}
+
+.onOpenURL { url in
+    if let route = AppDeepLink.route(for: url) { router.push(route) }
 }
 ```
 
-URLs delivered through `onOpenURL` are handled automatically by
-`KVRouterHost`. Unknown payloads are ignored.
-
 ## State Restoration
 
-`KVAppRoute` is `Codable`. Restore persisted paths with `restorePath(_:)`:
+Conform a route to `KVRestorableRoute` (`KVRoute` + `Codable`) to mark it as
+surviving persistence, then read the stack from `routes` and restore with
+`setPath`:
 
 ```swift
-let path = try JSONDecoder().decode([KVAppRoute].self, from: data)
-router.restorePath(path)
+enum ShopRoute: KVRestorableRoute { … }
+
+let saved = router.routes.compactMap { $0 as? ShopRoute }
+// … encode, persist, decode …
+router.setPath(decoded)
 ```
 
-Dynamic `.customView` routes are in-memory only, so restoration drops custom
-views and uses the host default transition for restored typed routes.
+Screens pushed with `pushView { }` hold their view as a closure in memory, so
+they are not restorable and must be filtered out before persisting.
+
+> **Not yet shipped:** encoding a mixed-type `[any KVRoute]` stack needs a codec
+> that maps `restorationID` back to a concrete type. Until it lands, persist a
+> single concrete route type as above.
 
 ## Observation and Concurrency
 
 - iOS 17+: `KVAppRouter` participates in fine-grained Observation tracking.
 - iOS 16: the same API falls back to `ObservableObject`.
+- The fallback is asymmetric, so prefer sending commands over rendering from
+  stack state: `@Environment(\.router)` does not observe an `ObservableObject`,
+  so a body reading `stackDepth` updates on iOS 17+ and silently never updates
+  on iOS 16. Use `@ObservedObject` if a view genuinely must render from it.
 - Router and middleware APIs are `@MainActor` isolated.
 - Navigation operations use a FIFO queue, including rapid calls around async
   middleware.
@@ -351,10 +417,11 @@ views and uses the host default transition for restored typed routes.
 | Area | Primary APIs |
 |---|---|
 | Push | `push(_:transition:)`, `pushView(tag:transition:_:)` |
-| Path changes | `replaceTop`, `setPath`, `restorePath` |
+| Path changes | `replaceTop`, `setPath` |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
-| Deep link | `handle(url:)` |
+| Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |
+| Testing | `KVRouterSpy`, `settle()` |
 
 ## License
 

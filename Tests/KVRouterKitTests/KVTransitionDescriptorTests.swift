@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+import KVRouterCore
 @testable import KVRouterKit
 
 @MainActor

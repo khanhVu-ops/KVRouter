@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import XCTest
+import KVRouterCore
 @testable import KVRouterKit
 
 @MainActor
@@ -54,7 +55,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
                 KVTransitionRequest(
                     operation: .push,
                     from: nil,
-                    to: KVNavigationEntry(route: .appFeature("detail")),
+                    to: KVNavigationEntry(route: TestRoute.screen("detail")),
                     transitionOverride: .depth
                 )
             ) {}
@@ -95,7 +96,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         coordinator.attach(to: navigationController)
 
@@ -128,7 +129,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
                 KVTransitionRequest(
                     operation: .push,
                     from: nil,
-                    to: KVNavigationEntry(route: .appFeature("detail")),
+                    to: KVNavigationEntry(route: TestRoute.screen("detail")),
                     transitionOverride: .depth
                 )
             ) {
@@ -168,7 +169,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         let window = makeVisibleWindow(rootViewController: navigationController)
         coordinator.attach(to: navigationController)
         original.reset()
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
 
         let task = Task { @MainActor in
             await coordinator.perform(
@@ -213,7 +214,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         let original = RecordingNavigationDelegate()
         navigationController.delegate = original
@@ -246,7 +247,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             animated: false
         )
         router.navigationEntries = [
-            KVNavigationEntry(route: .appFeature("detail"))
+            KVNavigationEntry(route: TestRoute.screen("detail"))
         ]
         let original = RecordingNavigationDelegate()
         navigationController.delegate = original
@@ -276,7 +277,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         coordinator.hasSource = { $0 == AnyHashable("card") }
         let root = UIViewController()
         let detail = UIViewController()
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
         let navigationController = UINavigationController(
             rootViewController: root
         )
@@ -352,7 +353,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
                 KVTransitionRequest(
                     operation: .push,
                     from: nil,
-                    to: KVNavigationEntry(route: .appFeature("detail")),
+                    to: KVNavigationEntry(route: TestRoute.screen("detail")),
                     transitionOverride: .depth
                 )
             ) {
@@ -437,7 +438,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             KVTransitionRequest(
                 operation: .push,
                 from: nil,
-                to: KVNavigationEntry(route: .appFeature("detail")),
+                to: KVNavigationEntry(route: TestRoute.screen("detail")),
                 transitionOverride: .system
             )
         ) {
@@ -493,7 +494,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             KVTransitionRequest(
                 operation: .push,
                 from: nil,
-                to: KVNavigationEntry(route: .appFeature("unused")),
+                to: KVNavigationEntry(route: TestRoute.screen("unused")),
                 transitionOverride: .system
             )
         ) {}
@@ -533,7 +534,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
             KVTransitionRequest(
                 operation: .push,
                 from: nil,
-                to: KVNavigationEntry(route: .appFeature("detail")),
+                to: KVNavigationEntry(route: TestRoute.screen("detail")),
                 transitionOverride: .zoom(sourceID: "card")
             )
         ) {
@@ -564,7 +565,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
                 KVTransitionRequest(
                     operation: .push,
                     from: nil,
-                    to: KVNavigationEntry(route: .appFeature("detail")),
+                    to: KVNavigationEntry(route: TestRoute.screen("detail")),
                     transitionOverride: .depth
                 )
             ) {
@@ -785,7 +786,7 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         let window = makeVisibleWindow(rootViewController: navigationController)
         coordinator.attach(to: navigationController)
         original.reset()
-        let entry = KVNavigationEntry(route: .appFeature("detail"))
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
 
         let task = Task { @MainActor in
             await coordinator.perform(

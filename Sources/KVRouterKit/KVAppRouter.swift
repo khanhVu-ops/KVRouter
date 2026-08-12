@@ -13,6 +13,7 @@
 import SwiftUI
 import Foundation
 import Observation
+import KVRouterCore
 
 // MARK: - ================================
 // MARK: App Router
@@ -21,17 +22,16 @@ import Observation
 /// Central navigation coordinator for the app.
 ///
 /// **Features:**
-/// - Type-safe navigation with `KVAppRoute` enum
+/// - Type-safe navigation with your own ``KVRoute`` types
 /// - Dynamic view support with `pushView { }`
 /// - Middleware support for auth guards, logging, etc.
-/// - Deep link handling
 ///
 /// **Usage:**
 /// ```swift
 /// @Environment(\.router) private var router
 ///
 /// // Push navigation
-/// router.push(.appFeature("profile"))
+/// router.push(ShopRoute.cart)
 /// router.pushView { CustomView() }
 ///
 /// // Navigation control
@@ -49,14 +49,14 @@ import Observation
 ///
 /// **Observation:** On iOS 17+ the router participates in the `Observation`
 /// framework exactly like an `@Observable` class, so a view reading `path`
-/// re-renders only when `path` changes. On iOS 16 it falls back to
+/// re-renders only when the stack changes. On iOS 16 it falls back to
 /// `ObservableObject`.
 ///
 /// - Warning: The fallback is asymmetric. `@Environment(\.router)` does not
-///   observe an `ObservableObject`, so a view that reads `path` through the
+///   observe an `ObservableObject`, so a view that reads ``routes`` through the
 ///   environment updates on iOS 17+ but silently never updates on iOS 16.
-///   Treat `path` as internal state and send commands instead; use
-///   `@ObservedObject` if a view genuinely must render from it.
+///   Send commands rather than rendering from stack state; use
+///   `@ObservedObject` if a view genuinely must.
 @MainActor
 public final class KVAppRouter: ObservableObject {
 
@@ -91,8 +91,16 @@ public final class KVAppRouter: ObservableObject {
     private var _navigationEntries: [KVNavigationEntry] = []
     private var transitionOverrides: [UUID: KVNavigationTransition] = [:]
 
-    /// Navigation stack path for push navigation.
-    public var path: [KVAppRoute] {
+    /// The stack above the root, oldest first.
+    ///
+    /// - Important: A snapshot, **not** an observable property. See the warning
+    ///   on the type about how observation differs between iOS 16 and 17+.
+    public var routes: [any KVRoute] {
+        _navigationEntries.map(\.route.base)
+    }
+
+    /// Type-erased stack, for the host binding and internal bookkeeping.
+    var path: [AnyKVRoute] {
         get {
             trackAccess(\.path)
             return _navigationEntries.map(\.route)
@@ -127,29 +135,14 @@ public final class KVAppRouter: ObservableObject {
 
     weak var transitionDriver: (any KVTransitionDriving)?
 
-    /// Host app: return a view for ``KVAppRoute/appFeature(_:)`` ids (e.g. `"profile"`). `nil` → ``EmptyView`` in ``buildView(for:)``.
-    public var appFeatureViewBuilder: ((String) -> AnyView?)?
+    // MARK: - Dynamic View Builders
 
-    /// Host app: return a view for ``KVAppRoute/deepLink(_:)`` payloads. `nil` → ``EmptyView``.
-    public var deepLinkViewBuilder: ((String) -> AnyView?)?
-
-    // MARK: - View Builder Registries
-
-    /// Metadata for a custom pushed view — lets ``popTo(tag:)`` and
-    /// ``popTo(_:)-view-type`` target dynamic views whose `.customView(UUID)`
-    /// route is opaque to the caller.
-    struct CustomViewInfo {
-        /// Optional caller-chosen tag from `pushView(tag:)`.
-        let tag: String?
-        /// Fully qualified name of the concrete view type (e.g. `MyApp.DetailView`).
-        let typeName: String
-    }
-
-    /// Registry for custom pushed views (keyed by UUID).
-    private var customBuilders: [UUID: () -> AnyView] = [:]
-
-    /// Metadata for custom pushed views (kept in sync with `customBuilders`).
-    private var customViewInfo: [UUID: CustomViewInfo] = [:]
+    /// Views pushed via `pushView { }`, keyed by ``KVDynamicViewRoute/id``.
+    ///
+    /// Tag and view type used to live in a parallel dictionary here; they are
+    /// now fields on ``KVDynamicViewRoute`` itself, so there is nothing left to
+    /// keep in sync.
+    private var dynamicBuilders: [UUID: () -> AnyView] = [:]
 
     // MARK: - Serial Operation Queue
 
@@ -220,7 +213,7 @@ public final class KVAppRouter: ObservableObject {
     /// Handle system-initiated path changes (swipe-back, @Environment(\.dismiss))
     /// invoked directly from the `path` setter, and run middleware as side-effects.
     /// Note: System pops cannot be cancelled — middleware runs as post-pop callbacks.
-    private func handlePathChange(from oldPath: [KVAppRoute], to newPath: [KVAppRoute]) {
+    private func handlePathChange(from oldPath: [AnyKVRoute], to newPath: [AnyKVRoute]) {
         // Only trigger when popping (newPath is shorter)
         guard newPath.count < oldPath.count else { return }
 
@@ -235,16 +228,32 @@ public final class KVAppRouter: ObservableObject {
 
         // Run middleware as side-effects for each removed route
         for (index, route) in removedRoutes.enumerated().reversed() {
-            let destination: KVAppRoute? = (newPath.count + index - 1 >= 0 && newPath.count + index - 1 < oldPath.count)
-                ? (index == 0 ? newPath.last : oldPath[newPath.count + index - 1])
-                : nil
+            let destination = Self.destinationBelow(
+                removedIndex: index,
+                oldPath: oldPath,
+                newPath: newPath
+            )
             Task { @MainActor in
-                await self.applyPopMiddlewares(from: route, to: destination)
+                await self.applyPopMiddlewares(
+                    from: route.base,
+                    to: destination?.base
+                )
             }
         }
     }
 
-    private func reconcileEntries(with routes: [KVAppRoute]) {
+    /// The route a removed screen popped back to: the one directly below it,
+    /// which for the deepest removal (index 0) is the new top of the stack.
+    private static func destinationBelow(
+        removedIndex index: Int,
+        oldPath: [AnyKVRoute],
+        newPath: [AnyKVRoute]
+    ) -> AnyKVRoute? {
+        if index == 0 { return newPath.last }
+        return oldPath[newPath.count + index - 1]
+    }
+
+    private func reconcileEntries(with routes: [AnyKVRoute]) {
         let oldEntries = _navigationEntries
         let prefixCount = zip(oldEntries.map(\.route), routes)
             .prefix { $0 == $1 }
@@ -255,7 +264,7 @@ public final class KVAppRouter: ObservableObject {
     }
 
     private func makeEntry(
-        route: KVAppRoute,
+        route: any KVRoute,
         transition: KVNavigationTransition?
     ) -> KVNavigationEntry {
         let entry = KVNavigationEntry(route: route)
@@ -349,20 +358,20 @@ extension KVAppRouter {
 
     /// Push a typed route onto the navigation stack.
     /// - Parameter route: The route to navigate to.
-    public func push(_ route: KVAppRoute) {
+    public func push(_ route: any KVRoute) {
         push(route, transition: nil)
     }
 
     /// Push a typed route with a per-navigation transition override.
     public func push(
-        _ route: KVAppRoute,
+        _ route: any KVRoute,
         transition: KVNavigationTransition
     ) {
         push(route, transition: Optional(transition))
     }
 
     private func push(
-        _ route: KVAppRoute,
+        _ route: any KVRoute,
         transition: KVNavigationTransition?
     ) {
         enqueue { [weak self] in
@@ -405,19 +414,22 @@ extension KVAppRouter {
         transition: KVNavigationTransition?,
         _ build: @escaping () -> V
     ) {
-        let id = UUID()
+        let dynamicRoute = KVDynamicViewRoute(
+            id: UUID(),
+            tag: tag,
+            typeName: String(reflecting: V.self)
+        )
         enqueue { [weak self] in
             guard let self else { return }
-            self.customBuilders[id] = { AnyView(build()) }
-            self.customViewInfo[id] = CustomViewInfo(tag: tag, typeName: String(reflecting: V.self))
-            guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
-                self.removeCustomView(id)
+            self.dynamicBuilders[dynamicRoute.id] = { AnyView(build()) }
+            guard let finalRoute = await self.applyMiddlewares(to: dynamicRoute) else {
+                self.dynamicBuilders[dynamicRoute.id] = nil
                 return
             }
             // Middleware may have redirected to a different route — drop the
             // now-unused builder so it can't leak.
-            if finalRoute != .customView(id) {
-                self.removeCustomView(id)
+            if AnyKVRoute(finalRoute) != AnyKVRoute(dynamicRoute) {
+                self.dynamicBuilders[dynamicRoute.id] = nil
             }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
             let request = KVTransitionRequest(
@@ -453,20 +465,20 @@ extension KVAppRouter {
 
     /// Replace the top route with a new route.
     /// - Parameter route: The route to replace with.
-    public func replaceTop(with route: KVAppRoute) {
+    public func replaceTop(with route: any KVRoute) {
         replaceTop(with: route, transition: nil)
     }
 
     /// Replace the top route with a per-navigation transition override.
     public func replaceTop(
-        with route: KVAppRoute,
+        with route: any KVRoute,
         transition: KVNavigationTransition
     ) {
         replaceTop(with: route, transition: Optional(transition))
     }
 
     private func replaceTop(
-        with route: KVAppRoute,
+        with route: any KVRoute,
         transition: KVNavigationTransition?
     ) {
         enqueue { [weak self] in
@@ -503,17 +515,20 @@ extension KVAppRouter {
         transition: KVNavigationTransition?,
         _ build: @escaping () -> V
     ) {
-        let id = UUID()
+        let dynamicRoute = KVDynamicViewRoute(
+            id: UUID(),
+            tag: tag,
+            typeName: String(reflecting: V.self)
+        )
         enqueue { [weak self] in
             guard let self else { return }
-            self.customBuilders[id] = { AnyView(build()) }
-            self.customViewInfo[id] = CustomViewInfo(tag: tag, typeName: String(reflecting: V.self))
-            guard let finalRoute = await self.applyMiddlewares(to: .customView(id)) else {
-                self.removeCustomView(id)
+            self.dynamicBuilders[dynamicRoute.id] = { AnyView(build()) }
+            guard let finalRoute = await self.applyMiddlewares(to: dynamicRoute) else {
+                self.dynamicBuilders[dynamicRoute.id] = nil
                 return
             }
-            if finalRoute != .customView(id) {
-                self.removeCustomView(id)
+            if AnyKVRoute(finalRoute) != AnyKVRoute(dynamicRoute) {
+                self.dynamicBuilders[dynamicRoute.id] = nil
             }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
             if self.navigationEntries.isEmpty {
@@ -528,29 +543,20 @@ extension KVAppRouter {
     ///
     /// Applies middlewares to each route and cleans up orphaned builders.
     /// - Parameter routes: The new path.
-    public func setPath(_ routes: [KVAppRoute]) {
+    public func setPath(_ routes: [any KVRoute]) {
         enqueue { [weak self] in
             guard let self else { return }
-            var transformed: [KVAppRoute] = []
+            var transformed: [any KVRoute] = []
             for route in routes {
                 if let finalRoute = await self.applyMiddlewares(to: route) {
                     transformed.append(finalRoute)
                 }
             }
             self.cleanupOrphanedBuilders(newPath: transformed)
-            self.path = transformed
+            self.path = transformed.map(AnyKVRoute.init)
         }
     }
 
-    /// Restore a persisted path (state restoration).
-    ///
-    /// Routes that cannot be rebuilt after decoding are dropped —
-    /// `.customView` stores its view builder in memory only, so a decoded
-    /// `.customView` would render ``EmptyView``. See ``KVAppRoute/isRestorable``.
-    /// - Parameter routes: The decoded path to restore.
-    public func restorePath(_ routes: [KVAppRoute]) {
-        setPath(routes.filter(\.isRestorable))
-    }
 }
 
 // MARK: - ================================
@@ -566,7 +572,7 @@ extension KVAppRouter {
             guard let self else { return }
             guard let fromEntry = self.navigationEntries.last else { return }
             let toEntry = self.navigationEntries.dropLast().last
-            guard await self.applyPopMiddlewares(from: fromEntry.route, to: toEntry?.route) else { return }
+            guard await self.applyPopMiddlewares(from: fromEntry.route.base, to: toEntry?.route.base) else { return }
             let request = KVTransitionRequest(
                 operation: .pop,
                 from: fromEntry,
@@ -586,7 +592,7 @@ extension KVAppRouter {
         enqueue { [weak self] in
             guard let self else { return }
             guard let fromEntry = self.navigationEntries.last else { return }
-            guard await self.applyPopMiddlewares(from: fromEntry.route, to: nil) else { return }
+            guard await self.applyPopMiddlewares(from: fromEntry.route.base, to: nil) else { return }
             self.isRouterControlledPop = true
             self.navigationEntries = []
         }
@@ -597,10 +603,11 @@ extension KVAppRouter {
     /// If the route is not found, nothing happens.
     /// Middleware runs for the top route being popped.
     /// - Parameter route: The route to pop to.
-    public func popTo(_ route: KVAppRoute) {
+    public func popTo(_ route: any KVRoute) {
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self._navigationEntries.firstIndex(where: { $0.route == route }) else { return }
+            let target = AnyKVRoute(route)
+            guard let index = self._navigationEntries.firstIndex(where: { $0.route == target }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -608,10 +615,10 @@ extension KVAppRouter {
     /// Pop to a route matching a predicate.
     /// Middleware runs for the top route being popped.
     /// - Parameter predicate: Condition to match the route.
-    public func popTo(where predicate: @escaping (KVAppRoute) -> Bool) {
+    public func popTo(where predicate: @escaping (any KVRoute) -> Bool) {
         enqueue { [weak self] in
             guard let self else { return }
-            guard let index = self._navigationEntries.lastIndex(where: { predicate($0.route) }) else { return }
+            guard let index = self._navigationEntries.lastIndex(where: { predicate($0.route.base) }) else { return }
             await self.performPop(toIndex: index)
         }
     }
@@ -665,7 +672,7 @@ extension KVAppRouter {
     private func performPop(toIndex index: Int) async {
         guard let fromEntry = navigationEntries.last else { return }
         let toEntry = navigationEntries[index]
-        guard await applyPopMiddlewares(from: fromEntry.route, to: toEntry.route) else { return }
+        guard await applyPopMiddlewares(from: fromEntry.route.base, to: toEntry.route.base) else { return }
         isRouterControlledPop = true
         let removedCount = navigationEntries.count - index - 1
         guard removedCount == 1 else {
@@ -683,23 +690,14 @@ extension KVAppRouter {
         }
     }
 
-    /// Whether a route matches a tag: custom views by their recorded tag,
-    /// `.appFeature` by its id.
-    private func route(_ route: KVAppRoute, matchesTag tag: String) -> Bool {
-        switch route {
-        case .customView(let id):
-            return customViewInfo[id]?.tag == tag
-        case .appFeature(let id):
-            return id == tag
-        case .deepLink:
-            return false
-        }
+    /// Whether a route is a dynamic view pushed with this tag.
+    private func route(_ route: AnyKVRoute, matchesTag tag: String) -> Bool {
+        route.unwrap(KVDynamicViewRoute.self)?.tag == tag
     }
 
-    /// Whether a route is a custom view built from the given view type.
-    private func route(_ route: KVAppRoute, matchesViewType typeName: String) -> Bool {
-        guard case let .customView(id) = route else { return false }
-        return customViewInfo[id]?.typeName == typeName
+    /// Whether a route is a dynamic view built from this view type.
+    private func route(_ route: AnyKVRoute, matchesViewType typeName: String) -> Bool {
+        route.unwrap(KVDynamicViewRoute.self)?.typeName == typeName
     }
 
     /// Pop a specific number of views from the stack.
@@ -713,7 +711,7 @@ extension KVAppRouter {
             guard let fromEntry = self.navigationEntries.last else { return }
             let targetIndex = self._navigationEntries.count - removeCount
             let toEntry = targetIndex > 0 ? self.navigationEntries[targetIndex - 1] : nil
-            guard await self.applyPopMiddlewares(from: fromEntry.route, to: toEntry?.route) else { return }
+            guard await self.applyPopMiddlewares(from: fromEntry.route.base, to: toEntry?.route.base) else { return }
             self.isRouterControlledPop = true
             guard removeCount == 1 else {
                 self.navigationEntries = Array(self.navigationEntries.dropLast(removeCount))
@@ -745,8 +743,8 @@ extension KVAppRouter {
     func allowInteractivePop(_ request: KVTransitionRequest) async -> Bool {
         guard navigationEntries.last?.id == request.from?.id else { return false }
         return await applyPopMiddlewares(
-            from: request.from?.route,
-            to: request.to?.route
+            from: request.from?.route.base,
+            to: request.to?.route.base
         )
     }
 
@@ -772,63 +770,15 @@ extension KVAppRouter {
 }
 
 // MARK: - ================================
-// MARK: Deep Linking
+// MARK: Dynamic View Building (Internal)
 // MARK: ================================
 
 extension KVAppRouter {
 
-    /// Handle a deep link URL.
-    ///
-    /// Forwards the URL as `.deepLink(payload)` only when `deepLinkViewBuilder` returns a view
-    /// for that payload. Unknown or unconfigured payloads are ignored (no navigation change).
-    ///
-    /// - Important: `KVAppRouter` is `final`, so you can't override this method from the host app.
-    ///   Use `deepLinkViewBuilder` instead.
-    ///
-    /// - Parameter url: The URL to handle.
-    public func handle(url: URL) {
-        guard let builder = deepLinkViewBuilder else { return }
-
-        let payload = deepLinkPayload(from: url)
-        guard !payload.isEmpty, builder(payload) != nil else { return }
-
-        push(.deepLink(payload))
+    /// The view for a `pushView { }` screen, or `nil` when its builder is gone.
+    func dynamicView(for route: KVDynamicViewRoute) -> AnyView? {
+        dynamicBuilders[route.id]?()
     }
-
-    /// Convert an incoming URL into an opaque payload string.
-    ///
-    /// The host app can parse this payload inside `deepLinkViewBuilder`.
-    private func deepLinkPayload(from url: URL) -> String {
-        let pathComponents = url.pathComponents.filter { $0 != "/" }
-
-        var parts: [String] = []
-        if let host = url.host, !host.isEmpty {
-            parts.append(host)
-        }
-        parts.append(contentsOf: pathComponents)
-
-        var payload = parts.joined(separator: "/")
-
-        // Keep query as part of the payload for cases where the URL routing relies on it.
-        if let query = url.query, !query.isEmpty {
-            payload += "?\(query)"
-        }
-
-        return payload
-    }
-}
-
-// MARK: - ================================
-// MARK: View Building (Internal)
-// MARK: ================================
-
-extension KVAppRouter {
-
-    /// Build a view for a push route.
-    func buildCustomView(for id: UUID) -> AnyView {
-        customBuilders[id]?() ?? AnyView(EmptyView())
-    }
-
 }
 
 // MARK: - ================================
@@ -840,9 +790,9 @@ extension KVAppRouter {
     /// Apply all middlewares to a route.
     /// - Parameter route: The route to process.
     /// - Returns: The transformed route, or nil if cancelled.
-    private func applyMiddlewares(to route: KVAppRoute) async -> KVAppRoute? {
-        let fromRoute: KVAppRoute? = _navigationEntries.last?.route
-        var candidate: KVAppRoute? = route
+    private func applyMiddlewares(to route: any KVRoute) async -> (any KVRoute)? {
+        let fromRoute: (any KVRoute)? = _navigationEntries.last?.route.base
+        var candidate: (any KVRoute)? = route
 
         for middleware in middlewares {
             guard let current = candidate else { return nil }
@@ -858,7 +808,7 @@ extension KVAppRouter {
     ///   - to: The route that will be on top after popping.
     /// - Returns: `true` if all middlewares allow the pop, `false` to cancel.
     @discardableResult
-    func applyPopMiddlewares(from: KVAppRoute?, to: KVAppRoute?) async -> Bool {
+    func applyPopMiddlewares(from: (any KVRoute)?, to: (any KVRoute)?) async -> Bool {
         for middleware in middlewares {
             let allowed = await middleware.willPop(from: from, to: to)
             if !allowed { return false }
@@ -874,29 +824,23 @@ extension KVAppRouter {
 
 private extension KVAppRouter {
 
-    /// Remove a custom view's builder and metadata.
-    func removeCustomView(_ id: UUID) {
-        customBuilders[id] = nil
-        customViewInfo[id] = nil
-    }
-
-    /// Clean up builder for a specific route if it's a custom view.
-    func cleanupBuilder(for route: KVAppRoute) {
-        if case let .customView(id) = route {
-            removeCustomView(id)
+    /// Drop the builder behind a route, when it is a dynamic view.
+    func cleanupBuilder(for route: AnyKVRoute) {
+        if let dynamic = route.unwrap(KVDynamicViewRoute.self) {
+            dynamicBuilders[dynamic.id] = nil
         }
     }
 
-    /// Clean up builders no longer in the new path.
-    func cleanupOrphanedBuilders(newPath: [KVAppRoute]) {
-        let newIDs = Set(newPath.compactMap { route -> UUID? in
-            if case let .customView(id) = route { return id }
-            return nil
-        })
-        let currentIDs = Set(_navigationEntries.compactMap { entry -> UUID? in
-            if case let .customView(id) = entry.route { return id }
-            return nil
-        })
-        currentIDs.subtracting(newIDs).forEach { removeCustomView($0) }
+    /// Drop builders for dynamic views the new path no longer contains.
+    func cleanupOrphanedBuilders(newPath: [any KVRoute]) {
+        let surviving = Set(newPath.compactMap { ($0 as? KVDynamicViewRoute)?.id })
+        let current = Set(
+            _navigationEntries.compactMap {
+                $0.route.unwrap(KVDynamicViewRoute.self)?.id
+            }
+        )
+        for id in current.subtracting(surviving) {
+            dynamicBuilders[id] = nil
+        }
     }
 }

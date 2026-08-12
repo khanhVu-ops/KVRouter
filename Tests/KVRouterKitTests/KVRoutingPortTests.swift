@@ -26,7 +26,7 @@ private final class ProductListViewModel {
     var canGoBack: Bool { router.stackDepth > 0 }
 
     func didTapProduct(_ id: Int) {
-        router.push(KVAppRoute.appFeature("product-\(id)"))
+        router.push(TestRoute.screen("product-\(id)"))
     }
 
     func didTapBack() {
@@ -58,7 +58,7 @@ final class KVRoutingPortTests: XCTestCase {
 
         XCTAssertEqual(
             router.operations,
-            [.push(AnyKVRoute(KVAppRoute.appFeature("product-42")))]
+            [.push(AnyKVRoute(TestRoute.screen("product-42")))]
         )
         XCTAssertEqual(router.stackDepth, 1)
     }
@@ -72,7 +72,7 @@ final class KVRoutingPortTests: XCTestCase {
         sut.didTapProduct(42)
         await router.settle()
 
-        XCTAssertEqual(router.path, [.appFeature("product-42")])
+        XCTAssertEqual(router.path, [.screen("product-42")])
         XCTAssertEqual(router.stackDepth, 1)
     }
 
@@ -101,14 +101,14 @@ final class KVRoutingPortTests: XCTestCase {
     func testSettleAwaitsQueuedOperations() async {
         let router = KVAppRouter()
 
-        router.push(.appFeature("a"))
-        router.push(.appFeature("b"))
-        router.push(.appFeature("c"))
+        router.push(TestRoute.screen("a"))
+        router.push(TestRoute.screen("b"))
+        router.push(TestRoute.screen("c"))
         await router.settle()
 
         XCTAssertEqual(
             router.path,
-            [.appFeature("a"), .appFeature("b"), .appFeature("c")]
+            [.screen("a"), .screen("b"), .screen("c")]
         )
     }
 
@@ -121,12 +121,12 @@ final class KVRoutingPortTests: XCTestCase {
     func testSettleAfterMixedOperations() async {
         let router = KVAppRouter()
 
-        router.push(.appFeature("a"))
+        router.push(TestRoute.screen("a"))
         router.popToRoot()
-        router.push(.appFeature("b"))
+        router.push(TestRoute.screen("b"))
         await router.settle()
 
-        XCTAssertEqual(router.path, [.appFeature("b")])
+        XCTAssertEqual(router.path, [.screen("b")])
     }
 
     // MARK: - AnyKVRoute
@@ -171,8 +171,7 @@ final class KVRoutingPortTests: XCTestCase {
 
     // MARK: - Spy fidelity
 
-    /// The port is route-agnostic: the spy takes any `KVRoute`. The real router
-    /// is limited to `KVAppRoute` until the typed route model lands in Phase 3.
+    /// The port is route-agnostic — spy and real router both take any `KVRoute`.
     func testSpyAcceptsCustomRouteTypes() {
         let router = KVRouterSpy()
 

@@ -3,11 +3,14 @@
 //  KVRouterKitExample
 //
 //  Screens used by the demo. Navigation is driven entirely through
-//  @Environment(\.router) — on iOS 17+ reads like `router.path.count`
-//  are tracked with fine-grained Observation.
+//  @Environment(\.router) by *sending commands*. Reading stack state in a body
+//  is deliberately not shown: `@Environment` does not observe an
+//  ObservableObject, so it works on iOS 17+ and silently never updates on
+//  iOS 16.
 //
 
 import SwiftUI
+import KVRouterCore
 import KVRouterKit
 
 // MARK: - Transition gallery destinations
@@ -130,9 +133,6 @@ struct DetailView: View {
         List {
             Section {
                 LabeledContent("Detail number", value: "\(number)")
-                // Reading router.path here demonstrates observation:
-                // this row updates whenever the stack changes.
-                LabeledContent("Stack depth", value: "\(router.path.count)")
             }
 
             Section("Navigate") {
@@ -140,7 +140,7 @@ struct DetailView: View {
                     router.pushView { DetailView(number: number + 1) }
                 }
                 Button("Replace top with profile") {
-                    router.replaceTop(with: .appFeature("profile"))
+                    router.replaceTop(with: AppRoute.profile)
                 }
             }
 
@@ -159,8 +159,8 @@ struct DetailView: View {
                     // screens above it — no tag needed.
                     router.popTo(DetailView.self)
                 }
-                Button("Pop to .appFeature(\"profile\")") {
-                    router.popTo(.appFeature("profile"))
+                Button("Pop to AppRoute.profile") {
+                    router.popTo(AppRoute.profile)
                 }
             }
         }
@@ -168,14 +168,14 @@ struct DetailView: View {
     }
 }
 
-// MARK: - Profile / Premium / Login (typed .appFeature routes)
+// MARK: - Profile / Premium / Login (typed AppRoute cases)
 
 struct ProfileView: View {
     @Environment(\.router) private var router
 
     var body: some View {
         List {
-            Text("This screen is resolved from `.appFeature(\"profile\")` via `appFeatureViewBuilder`.")
+            Text("This screen is resolved from `AppRoute.profile` via the `.kvRoutes` registry.")
             Button("Pop to root") { router.popToRoot() }
         }
         .navigationTitle("Profile")
@@ -200,7 +200,7 @@ struct LoginView: View {
             Text("AuthMiddleware redirected you here because you were logged out.")
             Button("Log in, then continue to Premium") {
                 session.isLoggedIn = true
-                router.replaceTop(with: .appFeature("premium"))
+                router.replaceTop(with: AppRoute.premium)
             }
         }
         .navigationTitle("Login")

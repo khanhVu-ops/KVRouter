@@ -301,9 +301,15 @@ Viết lại phần điều phối path: `Set<UUID>` thay cờ Bool (BUG-2), g�
 hàng đợi (BUG-4), timeout cho mọi stage (BUG-5). Kèm BUG-3, 6, 7, 8.
 **DoD:** mỗi bug có test tái hiện đỏ trước, xanh sau.
 
-### Phase 5 — Deep link parser
-`protocol KVDeepLinkParser { func routes(for url: URL) -> [any KVRoute] }`.
-`deepLinkPayload(from:)` và `handle(url:)` rời khỏi router → pure function, test bằng bảng.
+### Phase 5 — Codec cho state restoration
+**Deep link đã gộp vào Phase 3, không tách được:** xoá `deepLink(String)` làm `handle(url:)`
+mất lý do tồn tại, để lại thì có trạng thái trung gian hỏng. Kết quả còn tốt hơn dự tính —
+không cần thêm protocol `KVDeepLinkParser` nào cả: app tự `.onOpenURL` rồi `push`, nên đây
+là **xoá API** chứ không phải thêm.
+
+Việc còn lại của phase này là mã hoá stack `[any KVRoute]`: cần codec map `restorationID` về
+kiểu cụ thể khi decode. **Đang là regression so với 2.0** (2.0 có `restorePath` vì
+`KVAppRoute` là `Codable`); README đã ghi rõ giới hạn tạm thời này.
 
 ### Phase 6 — Dọn & release
 Migrate XCTest → Swift Testing (đã sẵn Swift 6.2). Chuyển accessor test-only của
