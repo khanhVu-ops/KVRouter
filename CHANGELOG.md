@@ -2,10 +2,10 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
-## Unreleased — 3.0.0
+## 3.0.0 - 2026-08-12
 
-Not released yet. 3.0 is a clean break: there is no compatibility shim and no
-migration guide, because effectively nobody depends on 2.x yet.
+3.0 is a clean break: there is no compatibility shim and no migration guide,
+because effectively nobody depended on 2.x yet.
 
 ### Breaking Changes
 

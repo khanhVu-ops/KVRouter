@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "2.0.0"
+        from: "3.0.0"
     )
 ]
 ```
