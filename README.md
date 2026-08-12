@@ -214,6 +214,16 @@ iOS 16-17, the same call site transforms the live navigation views. If a source
 is no longer visible, navigation falls back to `.scaleAndFade` instead of
 blocking the queue.
 
+Pass the source's corner radius — SwiftUI's `clipShape` and `cornerRadius` do not
+set `layer.cornerRadius`, so it cannot be measured, and leaving it at 0 makes the
+transition animate to and from square corners over a rounded source:
+
+```swift
+CardView(item: item)
+    .clipShape(RoundedRectangle(cornerRadius: 24))
+    .kvTransitionSource(id: item.id, cornerRadius: 24)
+```
+
 ### Custom Transitions
 
 Custom transitions describe only compositor-safe endpoint values. KVRouterKit

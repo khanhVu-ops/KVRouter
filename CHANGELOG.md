@@ -67,6 +67,11 @@ migration guide, because effectively nobody depends on 2.x yet.
   replaced, and the drop is applied as a silent stack edit that no animator will
   claim. Both were needed -- storing the replace transition on the new entry made
   it play twice and made going back play it in reverse.
+- A zoom transition animated to and from square corners over a rounded source.
+  SwiftUI's `clipShape` and `cornerRadius` never reach `layer.cornerRadius`, so
+  measuring the layer reported 0; `kvTransitionSource(id:cornerRadius:)` now takes
+  the value and passes it to both the registry and the system's
+  `matchedTransitionSource` configuration.
 - Swipe-to-dismiss on a zoom transition left the source view hidden, holding an
   empty slot in the layout, while a button dismiss was fine. Zoom metadata was
   pruned when the navigation path changed, which for an interactive dismissal is
@@ -78,10 +83,6 @@ migration guide, because effectively nobody depends on 2.x yet.
 - Animation forcing on the native-zoom path is push-only. The push needs it
   (SwiftUI hands UIKit `animated: false` and the zoom would not play); the pop
   does not, since SwiftUI drives that dismissal itself.
-- A `UIView` was installed as `view.mask` for the reveal transition, on views
-  that are `UIHostingController` views. UIKit logs that as unsupported and warns
-  of a broken hierarchy; it is a `CALayer` mask now, which never enters the view
-  hierarchy.
 - Sheet and full-cover view builders leaked on swipe-to-dismiss. Removed with
   the modal layer rather than patched.
 - The transition coordinator was wired in `onAppear`, so swapping routers left
@@ -107,6 +108,11 @@ migration guide, because effectively nobody depends on 2.x yet.
 
 ### Known Gaps
 
+- The reveal transition masks a `UIHostingController` view with a `UIView`, which
+  UIKit logs as unsupported. Switching to a `CALayer` mask silences it but breaks
+  the animation: `UIViewPropertyAnimator` animates view properties, so a layer
+  transform snaps to its final value and the wipe disappears. Fixing both means
+  masking a wrapper view this package owns rather than the hosting view.
 - The animated `replaceTop` drops the entry below the new top, which SwiftUI sees
   as the element at that index changing. Whether it reuses the pushed screen's
   hosting controller or rebuilds it is unverified; a rebuild would flash and reset

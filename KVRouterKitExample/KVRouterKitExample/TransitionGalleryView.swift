@@ -203,7 +203,7 @@ struct TransitionGalleryView: View {
                         }
                     } label: {
                         heroCard(card)
-                            .kvTransitionSource(id: card.id)
+                            .kvTransitionSource(id: card.id, cornerRadius: 24)
                             .shadow(
                                 color: card.colors.last?.opacity(0.24) ?? .clear,
                                 radius: 16,

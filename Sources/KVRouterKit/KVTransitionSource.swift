@@ -129,6 +129,7 @@ final class KVWeakViewBox {
 
 private struct KVTransitionSourceModifier: ViewModifier {
     let id: AnyHashable
+    let cornerRadius: CGFloat
 
     @Environment(\.kvTransitionNamespace) private var namespace
     @Environment(\.kvTransitionSourceRegistry) private var registry
@@ -142,7 +143,14 @@ private struct KVTransitionSourceModifier: ViewModifier {
                         id: id,
                         frame: frame,
                         view: view,
-                        cornerRadius: view.layer.cornerRadius
+                        // The caller's value wins. A SwiftUI `clipShape` or
+                        // `cornerRadius` never reaches `layer.cornerRadius` —
+                        // SwiftUI clips its own way — so reading the layer alone
+                        // measured 0 and the hero animation landed on square
+                        // corners over a rounded source.
+                        cornerRadius: cornerRadius > 0
+                            ? cornerRadius
+                            : view.layer.cornerRadius
                     )
                 }
             }
@@ -151,7 +159,10 @@ private struct KVTransitionSourceModifier: ViewModifier {
             }
 
         if #available(iOS 18.0, *), let namespace {
-            observedContent.matchedTransitionSource(id: id, in: namespace)
+            // The system needs the shape too, for the same reason.
+            observedContent.matchedTransitionSource(id: id, in: namespace) {
+                $0.clipShape(.rect(cornerRadius: cornerRadius))
+            }
         } else {
             observedContent
         }
@@ -159,8 +170,25 @@ private struct KVTransitionSourceModifier: ViewModifier {
 }
 
 public extension View {
-    func kvTransitionSource<ID: Hashable>(id: ID) -> some View {
-        modifier(KVTransitionSourceModifier(id: AnyHashable(id)))
+
+    /// Marks this view as the source of a ``KVNavigationTransition/zoom(sourceID:)``.
+    ///
+    /// - Parameters:
+    ///   - id: Matches the `sourceID` passed to the transition.
+    ///   - cornerRadius: The source's corner radius. Pass the same value used to
+    ///     round the view: SwiftUI's `clipShape` and `cornerRadius` do not set
+    ///     `layer.cornerRadius`, so it cannot be measured, and leaving it at 0
+    ///     makes the transition animate to and from square corners.
+    func kvTransitionSource<ID: Hashable>(
+        id: ID,
+        cornerRadius: CGFloat = 0
+    ) -> some View {
+        modifier(
+            KVTransitionSourceModifier(
+                id: AnyHashable(id),
+                cornerRadius: cornerRadius
+            )
+        )
     }
 }
 

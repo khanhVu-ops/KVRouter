@@ -88,14 +88,14 @@ final class KVManagedTransitionView {
         let cornerRadius: CGFloat
         let masksToBounds: Bool
         let zPosition: CGFloat
-        let mask: CALayer?
+        let mask: UIView?
         let isDoubleSided: Bool
         let isUserInteractionEnabled: Bool
     }
 
     let view: UIView
     private let snapshot: Snapshot
-    private var transitionMask: CALayer?
+    private var transitionMask: UIView?
 
     init(_ view: UIView) {
         self.view = view
@@ -105,7 +105,7 @@ final class KVManagedTransitionView {
             cornerRadius: view.layer.cornerRadius,
             masksToBounds: view.layer.masksToBounds,
             zPosition: view.layer.zPosition,
-            mask: view.layer.mask,
+            mask: view.mask,
             isDoubleSided: view.layer.isDoubleSided,
             isUserInteractionEnabled: view.isUserInteractionEnabled
         )
@@ -119,7 +119,7 @@ final class KVManagedTransitionView {
         let resolved = state.resolved(containerSize: containerSize)
         guard let origin = resolved.revealOrigin else { return }
         let mask = makeMask(origin: origin)
-        mask.transform = CATransform3DIdentity
+        mask.transform = .identity
     }
 
     func apply(
@@ -140,7 +140,7 @@ final class KVManagedTransitionView {
 
         if let origin = resolved.revealOrigin {
             let mask = transitionMask ?? makeMask(origin: origin)
-            mask.transform = CATransform3DMakeScale(0.001, 0.001, 1)
+            mask.transform = CGAffineTransform(scaleX: 0.001, y: 0.001)
         }
     }
 
@@ -150,7 +150,7 @@ final class KVManagedTransitionView {
         view.layer.cornerRadius = snapshot.cornerRadius
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
-        transitionMask?.transform = CATransform3DIdentity
+        transitionMask?.transform = .identity
     }
 
     func applyHero(
@@ -177,20 +177,24 @@ final class KVManagedTransitionView {
         view.layer.cornerRadius = snapshot.cornerRadius
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
-        view.layer.mask = snapshot.mask
+        view.mask = snapshot.mask
         view.layer.isDoubleSided = snapshot.isDoubleSided
         view.isUserInteractionEnabled = snapshot.isUserInteractionEnabled
         transitionMask = nil
     }
 
-    /// A `CALayer` rather than a `UIView`.
+    /// A `UIView`, not a `CALayer`, and that is load-bearing.
     ///
-    /// `view.mask = someView` makes UIKit add that view into the hierarchy, and
-    /// the views being transitioned here are `UIHostingController` views — which
-    /// logs "Adding 'UIView' as a subview of UIHostingController.view is not
-    /// supported and may result in a broken view hierarchy". A mask layer needs
-    /// no view and never enters the hosting hierarchy at all.
-    private func makeMask(origin: UnitPoint) -> CALayer {
+    /// `UIViewPropertyAnimator` animates *view* properties, so `mask.transform`
+    /// on a `UIView` animates while the same change on a `CALayer` snaps straight
+    /// to its final value — the reveal wipe stops being visible at all.
+    ///
+    /// The cost is a UIKit log: `view.mask = someView` makes UIKit add that view
+    /// into the hierarchy, and these are `UIHostingController` views, so it warns
+    /// that the arrangement is unsupported. Losing the animation is the worse of
+    /// the two. Fixing both means masking a wrapper view this package owns
+    /// instead of the hosting view, which is hierarchy surgery mid-transition.
+    private func makeMask(origin: UnitPoint) -> UIView {
         let center = CGPoint(
             x: view.bounds.width * origin.x,
             y: view.bounds.height * origin.y
@@ -200,13 +204,18 @@ final class KVManagedTransitionView {
         let radius = hypot(farthestX, farthestY)
         let diameter = max(radius * 2, 1)
 
-        let mask = CALayer()
-        mask.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
-        mask.position = center
-        mask.backgroundColor = UIColor.black.cgColor
-        mask.cornerRadius = diameter / 2
-        mask.masksToBounds = true
-        view.layer.mask = mask
+        let mask = UIView(frame: CGRect(
+            x: 0,
+            y: 0,
+            width: diameter,
+            height: diameter
+        ))
+        mask.center = center
+        mask.backgroundColor = .black
+        mask.isUserInteractionEnabled = false
+        mask.layer.cornerRadius = diameter / 2
+        mask.layer.masksToBounds = true
+        view.mask = mask
         transitionMask = mask
         return mask
     }
