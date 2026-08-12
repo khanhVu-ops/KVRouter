@@ -141,6 +141,24 @@ extension KVNavigationTransition {
                     .scale(0.975)
                     .opacity(0.78)
             )
+        case .pageTurn(let edge):
+            let page = edge.kvPageGeometry
+            return KVTransitionStage(
+                // Starts standing on its spine with the free edge toward the
+                // viewer, then lays flat. No opacity ramp: paper is opaque, and
+                // back-face culling already hides it while it is edge-on.
+                incoming: .identity
+                    .anchor(page.spine)
+                    .rotation3D(
+                        .degrees(page.liftAngle),
+                        axis: page.axis,
+                        perspective: 0.55
+                    ),
+                // The page underneath, shaded by the one turning over it.
+                outgoing: .identity
+                    .scale(0.965)
+                    .opacity(0.55)
+            )
         case .flip3D(let axis):
             let vector: (x: CGFloat, y: CGFloat, z: CGFloat) = axis == .vertical
                 ? (0, 1, 0)
@@ -161,6 +179,32 @@ extension KVNavigationTransition {
             )
         case .custom(let custom):
             return custom.push
+        }
+    }
+}
+
+extension Edge {
+
+    /// Where a page pivots and which way it swings, for
+    /// ``KVNavigationTransition/pageTurn(edge:)``.
+    ///
+    /// The spine is the opposite edge from the one the page lifts at, and the
+    /// sign of `liftAngle` is what sends the free edge toward the viewer rather
+    /// than away behind the screen.
+    var kvPageGeometry: (
+        spine: UnitPoint,
+        axis: (x: CGFloat, y: CGFloat, z: CGFloat),
+        liftAngle: Double
+    ) {
+        switch self {
+        case .trailing:
+            return (UnitPoint(x: 0, y: 0.5), (0, 1, 0), -92)
+        case .leading:
+            return (UnitPoint(x: 1, y: 0.5), (0, 1, 0), 92)
+        case .top:
+            return (UnitPoint(x: 0.5, y: 1), (1, 0, 0), 92)
+        case .bottom:
+            return (UnitPoint(x: 0.5, y: 0), (1, 0, 0), -92)
         }
     }
 }

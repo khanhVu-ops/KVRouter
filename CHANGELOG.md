@@ -42,6 +42,11 @@ migration guide, because effectively nobody depends on 2.x yet.
 - `KVAppRouter.middlewareTimeout`, so a hung middleware cannot wedge navigation.
 - `handlePathChange` identifies removed entries by id rather than assuming a
   trailing truncation, which an animated replace violates by design.
+- `KVNavigationTransition.pageTurn(edge:)`: a 3D rotation pivoted on a spine
+  rather than the centre, so it reads as turning paper rather than flipping a
+  card. Built on a new `anchor(_:)` transition primitive, which moves the point
+  transforms pivot around -- applied before the animation starts, since moving an
+  anchor shifts the layer's position and animating that shift would slide the view.
 - `KVPathCodec`: persists and restores a stack of mixed route types, keyed on
   `KVRestorableRoute.restorationID`. Anything that cannot be carried across
   truncates the stack at that point rather than leaving a hole in it.

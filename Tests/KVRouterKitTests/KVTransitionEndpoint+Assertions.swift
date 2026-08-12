@@ -58,10 +58,17 @@ extension KVTransitionEndpoint {
             switch primitive {
             case .offset, .relativeOffset, .scale, .rotation, .rotation3D:
                 return true
-            case .opacity, .cornerRadius, .zPosition, .reveal:
+            case .opacity, .cornerRadius, .zPosition, .reveal, .anchor:
                 return false
             }
         }
+    }
+
+    var anchor: UnitPoint? {
+        state.primitives.reversed().compactMap { primitive -> UnitPoint? in
+            guard case .anchor(let point) = primitive else { return nil }
+            return point
+        }.first
     }
 
     var isIdentity: Bool { state.primitives.isEmpty }

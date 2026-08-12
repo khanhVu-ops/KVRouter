@@ -177,8 +177,14 @@ Two consequences worth knowing:
 .sharedAxis(axis: .horizontal)
 .depth
 .reveal(origin: .topTrailing)
+.pageTurn(edge: .trailing)
 .flip3D(axis: .vertical)
 ```
+
+`pageTurn` and `flip3D` are both 3D rotations; the difference is where they pivot.
+`flip3D` turns around the centre and reads as a card flip. `pageTurn` pivots on
+the spine — the edge opposite the one the page lifts at — so the free edge sweeps
+toward the viewer and lays flat, the way paper behaves.
 
 Override the default timing curve on any transition:
 

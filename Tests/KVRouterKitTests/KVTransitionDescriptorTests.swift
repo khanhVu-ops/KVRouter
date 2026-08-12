@@ -272,6 +272,43 @@ final class KVTransitionDescriptorTests: XCTestCase {
         XCTAssertEqual(descriptor.outgoingDelayFactor, 0, accuracy: 0.001)
     }
 
+    // MARK: - Page turn
+
+    /// A page turn is a rotation like `flip3D`, but pivoted on an edge. Without
+    /// the anchor it would read as a card flip around the centre.
+    func testPageTurnPivotsOnTheSpineOppositeTheLiftingEdge() {
+        let descriptor = KVNavigationTransition
+            .pageTurn(edge: .trailing)
+            .descriptor(operation: .push, reduceMotion: false)
+
+        XCTAssertEqual(descriptor.incoming.anchor, UnitPoint(x: 0, y: 0.5))
+        XCTAssertEqual(descriptor.incoming.rotation3DDegrees, -92, accuracy: 0.001)
+        // The page below is shaded, not moved out of the way.
+        XCTAssertEqual(descriptor.outgoing.opacity, 0.55, accuracy: 0.001)
+        XCTAssertNil(descriptor.outgoing.anchor)
+    }
+
+    func testPageTurnLeadingMirrorsTheSpineAndDirection() {
+        let descriptor = KVNavigationTransition
+            .pageTurn(edge: .leading)
+            .descriptor(operation: .push, reduceMotion: false)
+
+        XCTAssertEqual(descriptor.incoming.anchor, UnitPoint(x: 1, y: 0.5))
+        XCTAssertEqual(descriptor.incoming.rotation3DDegrees, 92, accuracy: 0.001)
+    }
+
+    func testPageTurnPopMirrorsTheEndpoints() {
+        let descriptor = KVNavigationTransition
+            .pageTurn(edge: .trailing)
+            .descriptor(operation: .pop, reduceMotion: false)
+
+        // Popping turns the page back: the outgoing screen is the one that
+        // swings out on the spine.
+        XCTAssertEqual(descriptor.outgoing.anchor, UnitPoint(x: 0, y: 0.5))
+        XCTAssertEqual(descriptor.outgoing.rotation3DDegrees, -92, accuracy: 0.001)
+        XCTAssertEqual(descriptor.incoming.opacity, 0.55, accuracy: 0.001)
+    }
+
     func testFlipPushUsesTwoMatching180DegreeFaces() {
         let descriptor = KVNavigationTransition.flip3D().descriptor(
             operation: .push,

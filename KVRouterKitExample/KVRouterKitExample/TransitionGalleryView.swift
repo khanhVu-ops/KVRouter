@@ -119,6 +119,14 @@ struct TransitionGalleryView: View {
                 transition: .reveal()
             ),
             TransitionOption(
+                id: "page",
+                title: "Page Turn",
+                subtitle: "Swings in on a spine, like paper",
+                symbol: "book.pages",
+                tint: .brown,
+                transition: .pageTurn()
+            ),
+            TransitionOption(
                 id: "flip",
                 title: "3D Flip",
                 subtitle: "A bold card turn",

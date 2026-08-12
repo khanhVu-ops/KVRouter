@@ -8,6 +8,7 @@ struct KVResolvedTransitionViewState {
     var cornerRadius: CGFloat?
     var zPosition: CGFloat?
     var revealOrigin: UnitPoint?
+    var anchor: UnitPoint?
     var has3DTransform = false
 }
 
@@ -73,6 +74,8 @@ extension KVTransitionViewState {
                 result.zPosition = value
             case .reveal(let origin):
                 result.revealOrigin = origin
+            case .anchor(let point):
+                result.anchor = point
             }
         }
 
@@ -91,6 +94,8 @@ final class KVManagedTransitionView {
         let mask: UIView?
         let isDoubleSided: Bool
         let isUserInteractionEnabled: Bool
+        let anchorPoint: CGPoint
+        let position: CGPoint
     }
 
     let view: UIView
@@ -107,19 +112,54 @@ final class KVManagedTransitionView {
             zPosition: view.layer.zPosition,
             mask: view.mask,
             isDoubleSided: view.layer.isDoubleSided,
-            isUserInteractionEnabled: view.isUserInteractionEnabled
+            isUserInteractionEnabled: view.isUserInteractionEnabled,
+            anchorPoint: view.layer.anchorPoint,
+            position: view.layer.position
         )
         view.isUserInteractionEnabled = false
     }
 
-    func prepareReveal(
+    /// Everything that must be in place *before* the animation starts.
+    ///
+    /// The anchor belongs here rather than in ``apply(_:containerSize:)``: moving
+    /// it shifts the layer's position, and doing that inside the animation block
+    /// would animate the shift and slide the view across the screen.
+    func prepare(
         for state: KVTransitionViewState,
         containerSize: CGSize
     ) {
         let resolved = state.resolved(containerSize: containerSize)
-        guard let origin = resolved.revealOrigin else { return }
-        let mask = makeMask(origin: origin)
-        mask.transform = .identity
+        if let anchor = resolved.anchor {
+            setAnchor(anchor)
+        }
+        if let origin = resolved.revealOrigin {
+            makeMask(origin: origin).transform = .identity
+        }
+    }
+
+    /// Repositions the layer so moving the anchor leaves the view where it was.
+    ///
+    /// Assumes the layer transform is still identity, which holds because this
+    /// runs before any transform is applied.
+    private func setAnchor(_ point: UnitPoint) {
+        let layer = view.layer
+        let target = CGPoint(x: point.x, y: point.y)
+        guard layer.anchorPoint != target else { return }
+
+        let bounds = layer.bounds
+        let old = CGPoint(
+            x: bounds.width * layer.anchorPoint.x,
+            y: bounds.height * layer.anchorPoint.y
+        )
+        let new = CGPoint(
+            x: bounds.width * target.x,
+            y: bounds.height * target.y
+        )
+        layer.position = CGPoint(
+            x: layer.position.x + (new.x - old.x),
+            y: layer.position.y + (new.y - old.y)
+        )
+        layer.anchorPoint = target
     }
 
     func apply(
@@ -178,6 +218,8 @@ final class KVManagedTransitionView {
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
         view.mask = snapshot.mask
+        view.layer.anchorPoint = snapshot.anchorPoint
+        view.layer.position = snapshot.position
         view.layer.isDoubleSided = snapshot.isDoubleSided
         view.isUserInteractionEnabled = snapshot.isUserInteractionEnabled
         transitionMask = nil
@@ -337,15 +379,17 @@ final class KVViewControllerTransitionAnimator: NSObject,
         let size = container.bounds.size
         let incoming = KVManagedTransitionView(toView)
         let outgoing = KVManagedTransitionView(fromView)
+
+        // Before any transform: the anchor compensation assumes the layer
+        // transform is still identity.
+        incoming.prepare(for: activeDescriptor.incoming.state, containerSize: size)
+        outgoing.prepare(for: activeDescriptor.outgoing.state, containerSize: size)
+
         if operation == .push, let heroGeometry {
             incoming.applyHero(heroGeometry, fullFrame: toView.frame)
         } else {
             incoming.apply(activeDescriptor.incoming.state, containerSize: size)
         }
-        outgoing.prepareReveal(
-            for: activeDescriptor.outgoing.state,
-            containerSize: size
-        )
 
         animator.addAnimations({
             incoming.applyIdentity()

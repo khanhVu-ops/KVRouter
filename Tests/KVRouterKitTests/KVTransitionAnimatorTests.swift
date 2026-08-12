@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import XCTest
 import KVRouterCore
 @testable import KVRouterKit
@@ -94,11 +95,44 @@ final class KVTransitionAnimatorTests: XCTestCase {
         XCTAssertTrue(view.layer.isDoubleSided)
     }
 
+    /// Moving the anchor moves the layer unless the position is compensated, so
+    /// the check that matters is that the view has not budged.
+    func testAnchorIsCompensatedAndRestored() {
+        let view = UIView(frame: CGRect(x: 10, y: 20, width: 200, height: 100))
+        let originalFrame = view.frame
+        let originalAnchor = view.layer.anchorPoint
+        let originalPosition = view.layer.position
+        let managed = KVManagedTransitionView(view)
+
+        managed.prepare(
+            for: .identity.anchor(UnitPoint(x: 0, y: 0.5)),
+            containerSize: view.bounds.size
+        )
+
+        XCTAssertEqual(view.layer.anchorPoint, CGPoint(x: 0, y: 0.5))
+        XCTAssertEqual(view.frame, originalFrame, "Re-anchoring must not move the view")
+
+        managed.restore()
+
+        XCTAssertEqual(view.layer.anchorPoint, originalAnchor)
+        XCTAssertEqual(view.layer.position, originalPosition)
+        XCTAssertEqual(view.frame, originalFrame)
+    }
+
+    func testStateWithoutAnAnchorLeavesItAlone() {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let managed = KVManagedTransitionView(view)
+
+        managed.prepare(for: .identity.scale(0.5), containerSize: view.bounds.size)
+
+        XCTAssertEqual(view.layer.anchorPoint, CGPoint(x: 0.5, y: 0.5))
+    }
+
     func testRevealMaskIsCircleCenteredAtOriginAndCoversFarthestCorner() throws {
         let view = UIView(frame: CGRect(x: 0, y: 0, width: 200, height: 300))
         let managed = KVManagedTransitionView(view)
 
-        managed.prepareReveal(
+        managed.prepare(
             for: .identity.reveal(from: .topTrailing),
             containerSize: view.bounds.size
         )

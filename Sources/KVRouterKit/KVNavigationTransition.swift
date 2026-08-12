@@ -108,6 +108,7 @@ enum KVTransitionPrimitive: Sendable, Equatable {
     case cornerRadius(CGFloat)
     case zPosition(CGFloat)
     case reveal(UnitPoint)
+    case anchor(UnitPoint)
 }
 
 public struct KVTransitionViewState: Sendable, Equatable {
@@ -171,6 +172,17 @@ public struct KVTransitionViewState: Sendable, Equatable {
         appending(.reveal(origin))
     }
 
+    /// Moves the point every transform pivots around.
+    ///
+    /// Rotations are otherwise centred, which reads as a card flip. Pinning the
+    /// anchor to an edge is what turns the same rotation into a page turn.
+    ///
+    /// Applied before the animation starts, never during it: moving the anchor
+    /// shifts the layer's position, and animating that shift would slide the view.
+    public func anchor(_ point: UnitPoint) -> Self {
+        appending(.anchor(point))
+    }
+
     private func appending(_ primitive: KVTransitionPrimitive) -> Self {
         Self(primitives: primitives + [primitive])
     }
@@ -212,6 +224,7 @@ public struct KVNavigationTransition {
         case sharedAxis(Axis)
         case depth
         case reveal(UnitPoint)
+        case pageTurn(Edge)
         case flip3D(KVFlip3DAxis)
         case zoom(AnyHashable)
         case custom(KVCustomTransitionSpec)
@@ -226,6 +239,7 @@ public struct KVNavigationTransition {
         case sharedAxis
         case depth
         case reveal
+        case pageTurn
         case flip3D
         case zoom
         case custom
@@ -250,6 +264,18 @@ public struct KVNavigationTransition {
 
     public static func reveal(origin: UnitPoint = .topTrailing) -> Self {
         Self(kind: .reveal(origin), animationOverride: nil)
+    }
+
+    /// Swings the incoming screen into place around a spine, like turning a page.
+    ///
+    /// Unlike ``flip3D(axis:)``, which pivots around the centre and reads as a
+    /// card flip, this pivots around the edge opposite `edge` — the spine — so
+    /// the free edge sweeps toward the viewer and lays flat.
+    ///
+    /// - Parameter edge: The edge the page lifts at. `.trailing` pivots on the
+    ///   leading spine, which is the familiar right-to-left page turn.
+    public static func pageTurn(edge: Edge = .trailing) -> Self {
+        Self(kind: .pageTurn(edge), animationOverride: nil)
     }
 
     public static func flip3D(axis: KVFlip3DAxis = .vertical) -> Self {
@@ -299,6 +325,9 @@ public struct KVNavigationTransition {
             return .easeOut(duration: 0.3)
         case .reveal:
             return .timingCurve(0.16, 1, 0.30, 1, duration: 0.42)
+        case .pageTurn:
+            // Slower and heavier than a flip: paper has weight.
+            return .timingCurve(0.30, 0.86, 0.20, 1, duration: 0.52)
         case .depth:
             return .timingCurve(0.20, 0.80, 0.20, 1, duration: 0.40)
         case .zoom:
@@ -331,6 +360,7 @@ public struct KVNavigationTransition {
         case .sharedAxis: .sharedAxis
         case .depth: .depth
         case .reveal: .reveal
+        case .pageTurn: .pageTurn
         case .flip3D: .flip3D
         case .zoom: .zoom
         case .custom: .custom
