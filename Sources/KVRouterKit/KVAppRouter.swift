@@ -119,10 +119,7 @@ public final class KVAppRouter: ObservableObject {
             let oldEntries = _navigationEntries
             withTrackedMutation(\.path) { _navigationEntries = newValue }
             cleanupRemovedEntries(from: oldEntries, to: newValue)
-            handlePathChange(
-                from: oldEntries.map(\.route),
-                to: newValue.map(\.route)
-            )
+            handlePathChange(from: oldEntries, to: newValue)
         }
     }
 
@@ -157,6 +154,19 @@ public final class KVAppRouter: ObservableObject {
     private var operationGeneration: UInt64 = 0
 
     // MARK: - Initialization
+
+    /// How long the middleware chain may take before an operation is abandoned.
+    ///
+    /// The transition path has its own watchdog; the middleware path had none,
+    /// so a single `await` that never returned wedged the FIFO queue for the
+    /// rest of the process — no navigation, no log, no way back.
+    public var middlewareTimeout: TimeInterval = 5
+
+    /// Whether a middleware timeout trips `assertionFailure`.
+    ///
+    /// Internal so tests can exercise the timeout path itself; a timeout in an
+    /// app is a bug that should be loud.
+    var assertsOnMiddlewareTimeout = true
 
     /// Creates a new router instance.
     /// - Parameter middlewares: Route middlewares (auth guards, loggers, interstitial ads, etc.)
@@ -207,50 +217,65 @@ public final class KVAppRouter: ObservableObject {
 
     // MARK: - Path Change Observation
 
-    /// Flag to distinguish router-controlled pops from system-initiated pops
-    private var isRouterControlledPop = false
+    /// Entries the router itself removed, so ``handlePathChange(from:to:)`` can
+    /// tell a programmatic pop (middleware already ran, and could cancel) from a
+    /// system one (swipe-back, `@Environment(\.dismiss)` — already happened, so
+    /// middleware runs as a notification).
+    ///
+    /// Per-entry rather than a single flag: a flag cannot describe two pops in
+    /// flight, and a path that fails to shrink leaves it stuck `true`, silently
+    /// swallowing middleware for the *next* system pop.
+    private var routerRemovedEntryIDs: Set<UUID> = []
 
-    /// Handle system-initiated path changes (swipe-back, @Environment(\.dismiss))
-    /// invoked directly from the `path` setter, and run middleware as side-effects.
-    /// Note: System pops cannot be cancelled — middleware runs as post-pop callbacks.
-    private func handlePathChange(from oldPath: [AnyKVRoute], to newPath: [AnyKVRoute]) {
-        // Only trigger when popping (newPath is shorter)
-        guard newPath.count < oldPath.count else { return }
+    /// The entry the in-flight back gesture claimed, so cancelling releases
+    /// exactly that one rather than whatever happens to be on top by then.
+    private var interactivePopClaim: KVNavigationEntry?
 
-        // Skip if this was a router-controlled pop (middleware already ran)
-        guard !isRouterControlledPop else {
-            isRouterControlledPop = false
-            return
-        }
+    /// Marks entries as removed by the router, so their middleware is not run
+    /// again when the stack change lands.
+    private func markRouterRemoved(_ entries: some Sequence<KVNavigationEntry>) {
+        routerRemovedEntryIDs.formUnion(entries.map(\.id))
+    }
 
-        // Find routes that were removed by the system
-        let removedRoutes = oldPath.suffix(from: newPath.count)
+    private func markRouterRemoved(_ entry: KVNavigationEntry?) {
+        if let entry { routerRemovedEntryIDs.insert(entry.id) }
+    }
 
-        // Run middleware as side-effects for each removed route
-        for (index, route) in removedRoutes.enumerated().reversed() {
-            let destination = Self.destinationBelow(
-                removedIndex: index,
-                oldPath: oldPath,
-                newPath: newPath
-            )
-            Task { @MainActor in
+    private func unmarkRouterRemoved(_ entry: KVNavigationEntry?) {
+        if let entry { routerRemovedEntryIDs.remove(entry.id) }
+    }
+
+    /// Runs pop middleware for screens the *system* removed.
+    private func handlePathChange(
+        from oldEntries: [KVNavigationEntry],
+        to newEntries: [KVNavigationEntry]
+    ) {
+        guard newEntries.count < oldEntries.count else { return }
+
+        let removed = Array(oldEntries.suffix(from: newEntries.count))
+        // Claim the router-driven ones here, whether or not any survive: leaving
+        // ids behind is what let the old flag leak into a later pop.
+        let routerDriven = Set(removed.map(\.id)).intersection(routerRemovedEntryIDs)
+        routerRemovedEntryIDs.subtract(routerDriven)
+
+        let systemRemoved = removed.enumerated()
+            .filter { !routerDriven.contains($0.element.id) }
+        guard !systemRemoved.isEmpty else { return }
+
+        // Through the queue, sequentially, top screen first. Firing one detached
+        // Task per screen let their middleware interleave with each other and
+        // with queued operations — the one thing the queue exists to prevent.
+        enqueue { [weak self] in
+            guard let self else { return }
+            for (offset, entry) in systemRemoved.reversed() {
+                let index = newEntries.count + offset
+                let destination = index > 0 ? oldEntries[index - 1] : nil
                 await self.applyPopMiddlewares(
-                    from: route.base,
-                    to: destination?.base
+                    from: entry.route.base,
+                    to: destination?.route.base
                 )
             }
         }
-    }
-
-    /// The route a removed screen popped back to: the one directly below it,
-    /// which for the deepest removal (index 0) is the new top of the stack.
-    private static func destinationBelow(
-        removedIndex index: Int,
-        oldPath: [AnyKVRoute],
-        newPath: [AnyKVRoute]
-    ) -> AnyKVRoute? {
-        if index == 0 { return newPath.last }
-        return oldPath[newPath.count + index - 1]
     }
 
     private func reconcileEntries(with routes: [AnyKVRoute]) {
@@ -485,6 +510,30 @@ extension KVAppRouter {
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
+            await self.commitReplaceTop(with: entry, transition: transition)
+        }
+    }
+
+    /// Swaps the top entry through the transition driver.
+    ///
+    /// Until 3.0 this mutated the stack directly, so `replaceTop(transition:)`
+    /// recorded the transition but never played it — the argument only took
+    /// effect when that entry was later popped.
+    private func commitReplaceTop(
+        with entry: KVNavigationEntry,
+        transition: KVNavigationTransition?
+    ) async {
+        let previous = navigationEntries.last
+        let request = KVTransitionRequest(
+            operation: .replace,
+            from: previous,
+            to: entry,
+            transitionOverride: transition
+        )
+        // The outgoing screen leaves the stack, so its middleware must not run
+        // again as though the system had popped it.
+        markRouterRemoved(previous)
+        await performNavigation(request) {
             if self.navigationEntries.isEmpty {
                 self.navigationEntries = [entry]
             } else {
@@ -531,11 +580,7 @@ extension KVAppRouter {
                 self.dynamicBuilders[dynamicRoute.id] = nil
             }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
-            if self.navigationEntries.isEmpty {
-                self.navigationEntries = [entry]
-            } else {
-                self.navigationEntries[self.navigationEntries.count - 1] = entry
-            }
+            await self.commitReplaceTop(with: entry, transition: transition)
         }
     }
 
@@ -579,7 +624,7 @@ extension KVAppRouter {
                 to: toEntry,
                 transitionOverride: self.transitionOverride(for: fromEntry)
             )
-            self.isRouterControlledPop = true
+            self.markRouterRemoved(fromEntry)
             await self.performNavigation(request) {
                 self.navigationEntries.removeLast()
             }
@@ -593,7 +638,7 @@ extension KVAppRouter {
             guard let self else { return }
             guard let fromEntry = self.navigationEntries.last else { return }
             guard await self.applyPopMiddlewares(from: fromEntry.route.base, to: nil) else { return }
-            self.isRouterControlledPop = true
+            self.markRouterRemoved(self.navigationEntries)
             self.navigationEntries = []
         }
     }
@@ -673,7 +718,7 @@ extension KVAppRouter {
         guard let fromEntry = navigationEntries.last else { return }
         let toEntry = navigationEntries[index]
         guard await applyPopMiddlewares(from: fromEntry.route.base, to: toEntry.route.base) else { return }
-        isRouterControlledPop = true
+        markRouterRemoved(navigationEntries.dropFirst(index + 1))
         let removedCount = navigationEntries.count - index - 1
         guard removedCount == 1 else {
             self.navigationEntries = Array(self.navigationEntries.prefix(through: index))
@@ -712,7 +757,7 @@ extension KVAppRouter {
             let targetIndex = self._navigationEntries.count - removeCount
             let toEntry = targetIndex > 0 ? self.navigationEntries[targetIndex - 1] : nil
             guard await self.applyPopMiddlewares(from: fromEntry.route.base, to: toEntry?.route.base) else { return }
-            self.isRouterControlledPop = true
+            self.markRouterRemoved(self._navigationEntries.suffix(removeCount))
             guard removeCount == 1 else {
                 self.navigationEntries = Array(self.navigationEntries.dropLast(removeCount))
                 return
@@ -750,16 +795,26 @@ extension KVAppRouter {
 
     func prepareInteractivePop(_ request: KVTransitionRequest) {
         guard navigationEntries.last?.id == request.from?.id else { return }
-        isRouterControlledPop = true
+        interactivePopClaim = request.from
+        markRouterRemoved(request.from)
     }
 
     func cancelInteractivePopPreparation() {
-        isRouterControlledPop = false
+        // Scoped to the entry this gesture claimed, so an unrelated pop that
+        // landed meanwhile keeps its own claim.
+        unmarkRouterRemoved(interactivePopClaim)
+        interactivePopClaim = nil
     }
 
     func commitInteractivePop(_ request: KVTransitionRequest) -> Bool {
-        guard navigationEntries.last?.id == request.from?.id else { return false }
-        isRouterControlledPop = true
+        interactivePopClaim = nil
+        guard navigationEntries.last?.id == request.from?.id else {
+            // The stack moved under the gesture: release the claim, or the next
+            // system pop would find it stale and skip its middleware.
+            unmarkRouterRemoved(request.from)
+            return false
+        }
+        markRouterRemoved(request.from)
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         _ = withTransaction(transaction) {
@@ -791,15 +846,21 @@ extension KVAppRouter {
     /// - Parameter route: The route to process.
     /// - Returns: The transformed route, or nil if cancelled.
     private func applyMiddlewares(to route: any KVRoute) async -> (any KVRoute)? {
+        guard !middlewares.isEmpty else { return route }
         let fromRoute: (any KVRoute)? = _navigationEntries.last?.route.base
-        var candidate: (any KVRoute)? = route
 
-        for middleware in middlewares {
-            guard let current = candidate else { return nil }
-            candidate = await middleware.willNavigate(from: fromRoute, to: current)
+        return await withMiddlewareTimeout(
+            describing: "willNavigate(to: \(route))",
+            // A chain that never answers must not navigate: read it as a denial.
+            timedOutValue: nil
+        ) {
+            var candidate: (any KVRoute)? = route
+            for middleware in self.middlewares {
+                guard let current = candidate else { return nil }
+                candidate = await middleware.willNavigate(from: fromRoute, to: current)
+            }
+            return candidate
         }
-
-        return candidate
     }
 
     /// Apply all middlewares for a pop operation.
@@ -809,11 +870,66 @@ extension KVAppRouter {
     /// - Returns: `true` if all middlewares allow the pop, `false` to cancel.
     @discardableResult
     func applyPopMiddlewares(from: (any KVRoute)?, to: (any KVRoute)?) async -> Bool {
-        for middleware in middlewares {
-            let allowed = await middleware.willPop(from: from, to: to)
-            if !allowed { return false }
+        guard !middlewares.isEmpty else { return true }
+
+        return await withMiddlewareTimeout(
+            describing: "willPop(from: \(String(describing: from)))",
+            // A pop that already happened cannot be undone, and one the router
+            // drives should not be blocked by a broken middleware: allow it.
+            timedOutValue: true
+        ) {
+            for middleware in self.middlewares {
+                if await middleware.willPop(from: from, to: to) == false {
+                    return false
+                }
+            }
+            return true
         }
-        return true
+    }
+
+    /// Runs `body`, giving up after ``middlewareTimeout``.
+    private func withMiddlewareTimeout<T: Sendable>(
+        describing description: String,
+        timedOutValue: T,
+        // `@MainActor`, not `@Sendable`: middleware is not Sendable, and an
+        // actor-isolated closure is Sendable while still allowed to capture it.
+        _ body: @escaping @MainActor () async -> T
+    ) async -> T {
+        let timeout = middlewareTimeout
+        guard timeout > 0 else { return await body() }
+
+        // `.some(value)` is an answer, `.none` is the timeout. The extra level of
+        // optionality matters: middleware legitimately answers `nil` to deny a
+        // navigation, which must not read as "it hung".
+        let outcome: T? = await withCheckedContinuation { continuation in
+            let resumer = KVFirstResume(continuation)
+            Task { @MainActor in
+                let value = await body()
+                resumer.resume(value)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: UInt64(timeout * 1_000_000_000)
+                )
+                resumer.resume(nil)
+            }
+        }
+
+        guard let outcome else {
+            // The hung task is left running — a non-cooperative `await` cannot be
+            // killed. Unblocking the queue is the part that matters.
+            if assertsOnMiddlewareTimeout {
+                assertionFailure(
+                    """
+                    KVRouter middleware timed out after \(timeout)s in \(description). \
+                    The navigation was abandoned; without this the operation queue \
+                    would have stalled permanently.
+                    """
+                )
+            }
+            return timedOutValue
+        }
+        return outcome
     }
 
 }
@@ -842,5 +958,21 @@ private extension KVAppRouter {
         for id in current.subtracting(surviving) {
             dynamicBuilders[id] = nil
         }
+    }
+}
+
+/// Resumes a continuation for whichever racer finishes first, ignoring the rest.
+@MainActor
+private final class KVFirstResume<Value: Sendable> {
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: Value) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: value)
     }
 }

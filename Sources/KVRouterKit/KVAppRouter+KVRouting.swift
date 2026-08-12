@@ -33,6 +33,12 @@ public protocol KVViewRouting: KVRouting {
 
     func replaceTopWithView<V: View>(tag: String?, _ build: @escaping () -> V)
 
+    func replaceTopWithView<V: View>(
+        tag: String?,
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    )
+
     /// Pop back to the nearest screen below pushed with this tag.
     ///
     /// Tags come from `pushView(tag:)`, which is why this is here rather than on
@@ -41,6 +47,50 @@ public protocol KVViewRouting: KVRouting {
 
     /// Pop back to the nearest screen below built from this view type.
     func popTo<V: View>(_ viewType: V.Type)
+}
+
+// MARK: - Defaulted Spellings
+
+/// Protocol requirements cannot carry default arguments, so the omit-the-tag
+/// spellings live here. Without them, code holding `any KVViewRouting` — which
+/// is what `@Environment(\.router)` hands back — would have to write
+/// `pushView(tag: nil) { … }`.
+public extension KVViewRouting {
+
+    func pushView<V: View>(_ build: @escaping () -> V) {
+        pushView(tag: nil, build)
+    }
+
+    func pushView<V: View>(
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    ) {
+        pushView(tag: nil, transition: transition, build)
+    }
+
+    /// Push an already-constructed view. Captured and built lazily.
+    func pushView<V: View>(_ view: V, tag: String? = nil) {
+        pushView(tag: tag) { view }
+    }
+
+    func pushView<V: View>(
+        _ view: V,
+        tag: String? = nil,
+        transition: KVNavigationTransition
+    ) {
+        pushView(tag: tag, transition: transition) { view }
+    }
+
+    func replaceTopWithView<V: View>(_ build: @escaping () -> V) {
+        replaceTopWithView(tag: nil, build)
+    }
+
+    func replaceTopWithView<V: View>(
+        transition: KVNavigationTransition,
+        _ build: @escaping () -> V
+    ) {
+        replaceTopWithView(tag: nil, transition: transition, build)
+    }
 }
 
 // MARK: - ================================

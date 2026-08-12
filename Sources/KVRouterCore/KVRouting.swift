@@ -30,8 +30,12 @@ import Foundation
 ///
 /// Test against `KVRouterSpy` from `KVRouterTesting` — no `KVAppRouter`, no
 /// SwiftUI, no simulator machinery.
+///
+/// `Sendable` costs conformers nothing: they are `@MainActor` classes, which are
+/// implicitly `Sendable`. It is required so the existential can be stored in a
+/// SwiftUI environment key.
 @MainActor
-public protocol KVRouting: AnyObject {
+public protocol KVRouting: AnyObject, Sendable {
 
     // MARK: - State
 

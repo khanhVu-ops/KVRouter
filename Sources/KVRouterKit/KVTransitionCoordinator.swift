@@ -75,6 +75,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     private var bridge: KVNavigationControllerBridge?
     private var nativeZoomEntryIDs: Set<UUID> = []
     private var navigationAnimationIntent: KVNavigationAnimationIntent?
+    private var navigationAnimationIntentExpiry: Task<Void, Never>?
     // SwiftUI may remove the route before UIKit asks for its pop animator.
     private var controllerMetadata: [
         ObjectIdentifier: KVControllerTransitionMetadata
@@ -108,7 +109,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         bridge?.detach()
         bridge = nil
         isBridgeAttached = false
-        navigationAnimationIntent = nil
+        clearNavigationAnimationIntent()
         completePendingTransition(cancelled: true)
     }
 
@@ -166,8 +167,12 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             supportsNativeZoom: Self.supportsNativeZoom
         )
 
-        guard request.operation == .push || request.operation == .pop else {
+        // `.replace` included: it is what makes `replaceTop(transition:)`
+        // actually animate instead of silently recording the transition.
+        guard request.operation != .replace || resolved.backend == .custom else {
+            prepareNavigationAnimationIntent(for: request)
             mutation()
+            bridge?.refreshInteractivePopAvailability()
             return
         }
 
@@ -360,7 +365,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     func navigationControllerDidShow(
         _ navigationController: UINavigationController
     ) {
-        navigationAnimationIntent = nil
+        clearNavigationAnimationIntent()
         completePendingTransition(cancelled: false)
         synchronizeControllerMetadata(in: navigationController)
         bridge?.refreshInteractivePopAvailability()
@@ -454,11 +459,19 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     ) {
         let intent = KVNavigationAnimationIntent(request: request)
         navigationAnimationIntent = intent
-        Task { [weak self] in
+        navigationAnimationIntentExpiry?.cancel()
+        navigationAnimationIntentExpiry = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.25))
-            guard self?.navigationAnimationIntent?.id == intent.id else { return }
+            guard !Task.isCancelled,
+                  self?.navigationAnimationIntent?.id == intent.id else { return }
             self?.navigationAnimationIntent = nil
         }
+    }
+
+    private func clearNavigationAnimationIntent() {
+        navigationAnimationIntentExpiry?.cancel()
+        navigationAnimationIntentExpiry = nil
+        navigationAnimationIntent = nil
     }
 
     private func scheduleWatchdog(for transaction: KVTransitionTransaction) {
@@ -487,7 +500,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
 private extension UINavigationController.Operation {
     func matches(_ operation: KVTransitionOperation) -> Bool {
         switch (self, operation) {
-        case (.push, .push), (.pop, .pop):
+        case (.push, .push), (.pop, .pop), (.push, .replace):
             return true
         default:
             return false

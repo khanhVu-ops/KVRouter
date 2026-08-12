@@ -139,8 +139,10 @@ struct DetailView: View {
                 Button("Push another detail") {
                     router.pushView { DetailView(number: number + 1) }
                 }
-                Button("Replace top with profile") {
-                    router.replaceTop(with: AppRoute.profile)
+                Button("Replace top with profile (animated)") {
+                    // The transition argument used to be recorded and never
+                    // played; a replace now animates like any other mutation.
+                    router.replaceTop(with: AppRoute.profile, transition: .depth)
                 }
             }
 

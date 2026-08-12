@@ -118,7 +118,10 @@ final class KVNavigationEntryTests: XCTestCase {
         driver.resume()
     }
 
-    func testReplaceAndBulkPopBypassCustomTransitionDriver() async {
+    /// `replaceTop(transition:)` used to record the transition and mutate the
+    /// stack directly, so the argument only took effect when that entry was
+    /// later popped. It now goes through the driver as a `.replace`.
+    func testReplaceTopDrivesTheTransition() async {
         let router = KVAppRouter()
         router.path = [.screen("a"), .screen("b")]
         let driver = RecordingDriver()
@@ -126,6 +129,21 @@ final class KVNavigationEntryTests: XCTestCase {
 
         router.replaceTop(with: TestRoute.screen("c"), transition: .depth)
         await waitUntil { router.path.last == .screen("c") }
+
+        XCTAssertEqual(driver.requests.count, 1)
+        XCTAssertEqual(driver.requests.first?.operation, .replace)
+        XCTAssertEqual(driver.requests.first?.from?.route, .screen("b"))
+        XCTAssertEqual(driver.requests.first?.to?.route, .screen("c"))
+    }
+
+    /// A bulk pop still bypasses the driver: only single-screen changes have a
+    /// UIKit operation to animate against.
+    func testBulkPopBypassesCustomTransitionDriver() async {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b"), .screen("c")]
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
         router.popToRoot()
         await waitUntil { router.path.isEmpty }
 

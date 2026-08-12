@@ -39,23 +39,22 @@ public struct KVRouterHost<Root: View>: View {
             .if(ignoreKeyboard) { view in
                 view.ignoresSafeArea(.keyboard)
             }
-            // Deep links are the app's to parse: map the URL to your own routes
-            // and call `setPath`/`push` from your own `.onOpenURL`. The router
-            // has no opinion about URL shapes.
-            .onAppear {
+            // Keyed on the router's identity, not `onAppear`: an app that
+            // swaps routers (logout, a new DI scope) without tearing down the
+            // host would otherwise leave the coordinator driving the dead one.
+            .task(id: ObjectIdentifier(router)) {
                 coordinator.sourceRegistry = sourceRegistry
                 coordinator.reduceMotion = reduceMotion
                 coordinator.router = router
                 router.transitionDriver = coordinator
             }
             .onDisappear {
-                coordinator.detach()
-                if let driver = router.transitionDriver,
-                   driver === coordinator {
-                    router.transitionDriver = nil
-                }
-                coordinator.sourceRegistry = nil
-                coordinator.router = nil
+                // Deliberately not `coordinator.detach()`. A TabView switch fires
+                // onDisappear without destroying the host, and tearing down the
+                // bridge there dropped custom transitions until the tab came
+                // back. Only settle what is mid-flight; `attach(to:)` is
+                // idempotent, so reappearing needs no repair.
+                coordinator.completePendingTransition(cancelled: true)
             }
             .task(id: reduceMotion) {
                 coordinator.reduceMotion = reduceMotion
