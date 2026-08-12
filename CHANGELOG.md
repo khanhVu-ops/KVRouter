@@ -40,6 +40,9 @@ migration guide, because effectively nobody depends on 2.x yet.
   transition overloads).
 - `KVAppRouter.settle()`: await the FIFO queue instead of polling.
 - `KVAppRouter.middlewareTimeout`, so a hung middleware cannot wedge navigation.
+- `KVPathCodec`: persists and restores a stack of mixed route types, keyed on
+  `KVRestorableRoute.restorationID`. Anything that cannot be carried across
+  truncates the stack at that point rather than leaving a hole in it.
 
 ### Fixed
 
@@ -78,9 +81,6 @@ migration guide, because effectively nobody depends on 2.x yet.
 
 ### Known Gaps
 
-- **State restoration is narrower than 2.0.** Encoding a mixed-type
-  `[any KVRoute]` stack needs a codec mapping `restorationID` back to a concrete
-  type, which has not landed. Persist a single concrete route type for now.
 - Whether UIKit renders custom animator frames for a same-depth
   `setViewControllers` (the `replaceTop` transition) is unverified.
 

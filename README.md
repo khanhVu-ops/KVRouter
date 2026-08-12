@@ -384,24 +384,39 @@ enum AppDeepLink {
 
 ## State Restoration
 
-Conform a route to `KVRestorableRoute` (`KVRoute` + `Codable`) to mark it as
-surviving persistence, then read the stack from `routes` and restore with
-`setPath`:
+Mark the routes you persist as `KVRestorableRoute` (`KVRoute` + `Codable`), then
+round-trip the stack through `KVPathCodec`:
 
 ```swift
-enum ShopRoute: KVRestorableRoute { … }
+enum ShopRoute: KVRestorableRoute {
+    case productDetail(id: Int)
+    case cart
+}
 
-let saved = router.routes.compactMap { $0 as? ShopRoute }
-// … encode, persist, decode …
-router.setPath(decoded)
+var codec = KVPathCodec()
+codec.register(ShopRoute.self)
+codec.register(AuthRoute.self)      // a stack can mix route types
+
+// Saving
+try codec.encode(router.routes).write(to: url)
+
+// Restoring
+router.setPath(try codec.decode(Data(contentsOf: url)))
 ```
 
-Screens pushed with `pushView { }` hold their view as a closure in memory, so
-they are not restorable and must be filtered out before persisting.
+A stack is a path, not a set: dropping an entry from the middle changes what the
+screens below it mean. So anything that cannot be carried across **truncates the
+stack at that point** rather than being skipped —
 
-> **Not yet shipped:** encoding a mixed-type `[any KVRoute]` stack needs a codec
-> that maps `restorationID` back to a concrete type. Until it lands, persist a
-> single concrete route type as above.
+- a route that is not `KVRestorableRoute` (`pushView { }` screens, whose view is
+  a closure held in memory),
+- a type the reading codec was not told about,
+- a payload that no longer decodes after a shape change.
+
+`[Home, Product, Checkout]` with an undecodable `Product` restores as `[Home]`,
+never `[Home, Checkout]`. An archive written by an unrecognised format version
+throws `KVPathCodecError.unsupportedVersion` instead of quietly restoring
+nothing.
 
 ## Observation and Concurrency
 
@@ -430,6 +445,7 @@ they are not restorable and must be filtered out before persisting.
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |
+| Restoration | `KVRestorableRoute`, `KVPathCodec` |
 | Testing | `KVRouterSpy`, `settle()` |
 
 ## License

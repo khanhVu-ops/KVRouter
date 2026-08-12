@@ -301,15 +301,16 @@ Viết lại phần điều phối path: `Set<UUID>` thay cờ Bool (BUG-2), g�
 hàng đợi (BUG-4), timeout cho mọi stage (BUG-5). Kèm BUG-3, 6, 7, 8.
 **DoD:** mỗi bug có test tái hiện đỏ trước, xanh sau.
 
-### Phase 5 — Codec cho state restoration
+### Phase 5 — Codec cho state restoration ✅
 **Deep link đã gộp vào Phase 3, không tách được:** xoá `deepLink(String)` làm `handle(url:)`
-mất lý do tồn tại, để lại thì có trạng thái trung gian hỏng. Kết quả còn tốt hơn dự tính —
-không cần thêm protocol `KVDeepLinkParser` nào cả: app tự `.onOpenURL` rồi `push`, nên đây
-là **xoá API** chứ không phải thêm.
+mất lý do tồn tại. Kết quả tốt hơn dự tính — không cần protocol `KVDeepLinkParser` nào cả:
+app tự `.onOpenURL` rồi `push`, nên đây là **xoá API** chứ không phải thêm.
 
-Việc còn lại của phase này là mã hoá stack `[any KVRoute]`: cần codec map `restorationID` về
-kiểu cụ thể khi decode. **Đang là regression so với 2.0** (2.0 có `restorePath` vì
-`KVAppRoute` là `Codable`); README đã ghi rõ giới hạn tạm thời này.
+`KVPathCodec` trong Core đóng nốt regression so với 2.0. Quyết định thiết kế then chốt:
+route nào không mang qua được thì **cắt stack từ đó trở lên**, không bỏ qua — stack là một
+đường đi, bỏ một mắt giữa làm các screen bên dưới mang nghĩa khác.
+`[Home, Product, Checkout]` mà `Product` decode lỗi thì restore thành `[Home]`, không bao giờ
+là `[Home, Checkout]`.
 
 ### Phase 6 — Dọn & release
 Chuyển accessor test-only của `KVTransitionEndpoint` (~50 dòng production code mà Sources
