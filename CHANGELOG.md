@@ -2,7 +2,7 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
-## Unreleased
+## 3.1.0 - 2026-08-12
 
 ### Added
 
