@@ -70,8 +70,8 @@ về sheet thường.
 Phải thử trên simulator trước khi cam kết — nếu Apple chỉ hỗ trợ cho `NavigationStack` push
 thì zoom-to-modal nằm ngoài tầm 3.0.
 
-**Khoảng trống 2 — deep link mở modal (`myapp://settings` bật settings
-dạng sheet). Router sở hữu sheet thì việc này dễ; giờ deep link phải với tới state của đúng
+**Khoảng trống 2 — deep link mở modal.** (`myapp://settings` bật settings
+dạng sheet.) Router sở hữu sheet thì việc này dễ; giờ deep link phải với tới state của đúng
 view đó. Hai lối ra: (a) deep link luôn `push`, không present — đơn giản nhất, và hợp lý vì
 nội dung đến từ URL thường xứng đáng có chỗ trong stack; (b) app tự giữ một app-state object
 cho modal. Tôi nghiêng về (a), nhưng nếu app bạn có màn hình bắt buộc mở dạng modal từ URL
