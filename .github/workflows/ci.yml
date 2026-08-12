@@ -30,22 +30,29 @@ jobs:
 
       # Device names change with every runner image, so resolve one instead of
       # hardcoding "iPhone 16 Pro" and having CI break on an image bump.
+      # Every line here stays indented inside the block scalar. A line at a
+      # smaller indent ends the block, and YAML then tries to parse the script
+      # itself -- which is how the first version of this file failed to load at
+      # all, before any step ran.
       - name: Resolve a simulator
         id: sim
         run: |
           set -euo pipefail
-          UDID=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
-runtimes = json.load(sys.stdin)["devices"]
-for runtime in sorted(runtimes, reverse=True):
-    if "iOS" not in runtime:
-        continue
-    for device in runtimes[runtime]:
-        if device["name"].startswith("iPhone"):
-            print(device["udid"])
-            raise SystemExit
-raise SystemExit("no iPhone simulator available")
-')
+          UDID=$(xcrun simctl list devices available -j | jq -r '
+            [ .devices
+              | to_entries[]
+              | select(.key | test("iOS"))
+              | .value[]
+              | select(.name | startswith("iPhone"))
+            ]
+            | last
+            | .udid // empty
+          ')
+          if [ -z "$UDID" ]; then
+            echo "No iPhone simulator available on this image:"
+            xcrun simctl list devices available
+            exit 1
+          fi
           echo "Resolved $UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
