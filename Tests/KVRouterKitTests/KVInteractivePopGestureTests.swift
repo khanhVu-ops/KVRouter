@@ -5,6 +5,11 @@ import KVRouterCore
 
 @MainActor
 final class KVInteractivePopGestureTests: XCTestCase {
+    /// The controller holds its coordinator weakly, and the coordinator holds
+    /// the router weakly, so a fixture that only returns the controller loses
+    /// both — and every interactive-pop check then reads false. Park them here.
+    private var retained: [AnyObject] = []
+
     func testProgressClampsAndNormalizesLayoutDirection() {
         XCTAssertEqual(
             KVInteractiveTransitionController.progress(
@@ -91,6 +96,75 @@ final class KVInteractivePopGestureTests: XCTestCase {
         XCTAssertEqual(fixture.percentDriven.cancelCount, 1)
     }
 
+    // MARK: - UIKit's own back-swipe recognizer
+
+    /// `refreshAvailability()` runs from `navigationControllerDidShow`, which for
+    /// a drag is while the recognizer UIKit is driving the transition with is
+    /// still tracking — and assigning `isEnabled` there cancels it, killing the
+    /// transition mid-settle.
+    func testSystemGestureIsNotDisabledWhileItIsStillRecognizing() async {
+        let fixture = makeGestureFixture()
+        fixture.systemGesture.stubbedState = .changed
+        // Attaching already disabled it, so start from UIKit owning the gesture
+        // — the state this bug is about.
+        fixture.systemGesture.isEnabled = true
+
+        // The gallery below uses a custom transition, so availability wants the
+        // system recognizer off.
+        fixture.controller.refreshAvailability()
+
+        XCTAssertTrue(
+            fixture.systemGesture.isEnabled,
+            "Disabling UIKit's recognizer mid-recognition cancels the transition it is driving"
+        )
+
+        fixture.systemGesture.stubbedState = .possible
+        // The retry sleeps, so yielding is not enough to observe it.
+        for _ in 0..<100 where fixture.systemGesture.isEnabled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(
+            fixture.systemGesture.isEnabled,
+            "Once the recognizer settles the deferred change must still land"
+        )
+    }
+
+    /// The other half: with nothing in flight the flip is immediate, so the
+    /// custom edge pan owns the gesture from the first frame.
+    func testSystemGestureIsDisabledImmediatelyWhenSettled() {
+        let fixture = makeGestureFixture()
+        fixture.systemGesture.stubbedState = .possible
+
+        fixture.controller.refreshAvailability()
+
+        XCTAssertFalse(fixture.systemGesture.isEnabled)
+    }
+
+    private func makeGestureFixture() -> (
+        controller: KVInteractiveTransitionController,
+        systemGesture: StubGestureRecognizer
+    ) {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b")]
+        let coordinator = KVTransitionCoordinator(defaultTransition: .depth)
+        coordinator.router = router
+        retained.append(router)
+        retained.append(coordinator)
+        let navigationController = RecordingNavigationController()
+        navigationController.viewControllers = [
+            UIViewController(), UIViewController()
+        ]
+        let systemGesture = StubGestureRecognizer()
+        let controller = KVInteractiveTransitionController(
+            coordinator: coordinator,
+            percentDrivenFactory: { RecordingPercentDrivenTransition() },
+            systemGestureResolver: { _ in systemGesture }
+        )
+        controller.attach(to: navigationController)
+        return (controller, systemGesture)
+    }
+
     private func makeFixture(
         middlewares: [KVRouteMiddleware] = []
     ) -> (
@@ -163,5 +237,16 @@ private final class RecordingPercentDrivenTransition:
 
     override func cancel() {
         cancelCount += 1
+    }
+}
+
+/// `state` is read-only from outside a recognizer, so the test drives it.
+@MainActor
+private final class StubGestureRecognizer: UIGestureRecognizer {
+    var stubbedState: UIGestureRecognizer.State = .possible
+
+    override var state: UIGestureRecognizer.State {
+        get { stubbedState }
+        set { stubbedState = newValue }
     }
 }

@@ -8,7 +8,9 @@ final class KVInteractiveTransitionController: NSObject,
     private weak var systemEdgePanGesture: UIGestureRecognizer?
     private var systemEdgePanWasEnabled = true
     private let percentDrivenFactory: () -> UIPercentDrivenInteractiveTransition
+    private let systemGestureResolver: (UINavigationController) -> UIGestureRecognizer?
     private let edgePanGesture = UIScreenEdgePanGestureRecognizer()
+    private var systemGestureRetry: Task<Void, Never>?
 
     private(set) var percentDriven: UIPercentDrivenInteractiveTransition?
     private var request: KVTransitionRequest?
@@ -23,10 +25,14 @@ final class KVInteractiveTransitionController: NSObject,
         coordinator: KVTransitionCoordinator,
         percentDrivenFactory: @escaping () -> UIPercentDrivenInteractiveTransition = {
             UIPercentDrivenInteractiveTransition()
+        },
+        systemGestureResolver: @escaping (UINavigationController) -> UIGestureRecognizer? = {
+            $0.interactivePopGestureRecognizer
         }
     ) {
         self.coordinator = coordinator
         self.percentDrivenFactory = percentDrivenFactory
+        self.systemGestureResolver = systemGestureResolver
         super.init()
         edgePanGesture.addTarget(self, action: #selector(handleEdgePan(_:)))
         edgePanGesture.delegate = self
@@ -40,7 +46,7 @@ final class KVInteractiveTransitionController: NSObject,
         }
         detach()
         self.navigationController = navigationController
-        systemEdgePanGesture = navigationController.interactivePopGestureRecognizer
+        systemEdgePanGesture = systemGestureResolver(navigationController)
         systemEdgePanWasEnabled = systemEdgePanGesture?.isEnabled ?? true
         navigationController.view.addGestureRecognizer(edgePanGesture)
         refreshEdge()
@@ -50,6 +56,8 @@ final class KVInteractiveTransitionController: NSObject,
     func detach() {
         permissionTask?.cancel()
         permissionTask = nil
+        systemGestureRetry?.cancel()
+        systemGestureRetry = nil
         if edgePanGesture.view != nil {
             edgePanGesture.view?.removeGestureRecognizer(edgePanGesture)
         }
@@ -62,9 +70,43 @@ final class KVInteractiveTransitionController: NSObject,
     func refreshAvailability() {
         let usesCustomInteraction = coordinator?.canBeginInteractivePop() == true
         edgePanGesture.isEnabled = usesCustomInteraction
-        systemEdgePanGesture?.isEnabled = systemEdgePanWasEnabled
-            && !usesCustomInteraction
+        setSystemGesture(
+            enabled: systemEdgePanWasEnabled && !usesCustomInteraction
+        )
         refreshEdge()
+    }
+
+    /// Toggles UIKit's own back-swipe recognizer, but never mid-recognition.
+    ///
+    /// UIKit drives its interactive transitions with that recognizer, and
+    /// assigning `isEnabled` to a recognizer that is tracking touches cancels it
+    /// on the spot. `refreshAvailability()` runs from
+    /// `navigationControllerDidShow` — for a drag dismissal, exactly while the
+    /// transition it is driving is settling — so the flip waits instead.
+    ///
+    /// Deferring is safe in a way that flipping early is not: the value is
+    /// re-derived on every `refreshAvailability()`, and the retry re-reads it.
+    private func setSystemGesture(enabled: Bool) {
+        systemGestureRetry?.cancel()
+        systemGestureRetry = nil
+        guard let gesture = systemEdgePanGesture,
+              gesture.isEnabled != enabled else {
+            return
+        }
+
+        switch gesture.state {
+        case .began, .changed, .ended:
+            systemGestureRetry = Task { [weak self] in
+                // A recognizer leaves .ended/.changed when UIKit finishes the
+                // turn of the loop it is in, so one hop is normally enough; the
+                // guard re-checks rather than assuming.
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled else { return }
+                self?.setSystemGesture(enabled: enabled)
+            }
+        default:
+            gesture.isEnabled = enabled
+        }
     }
 
     func begin() -> Bool {

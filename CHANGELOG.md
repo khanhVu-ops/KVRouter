@@ -2,10 +2,17 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
-## Unreleased
+## 3.1.1 - 2026-08-12
 
 ### Fixed
 
+- UIKit's back-swipe recognizer is no longer enabled or disabled while it is
+  mid-recognition. `refreshAvailability()` decides who owns the back gesture and
+  runs from `navigationControllerDidShow` — for a drag dismissal, exactly as the
+  transition settles. Assigning `isEnabled` to a recognizer that is tracking
+  touches cancels it on the spot, and UIKit drives that transition with it, so a
+  drag could be cut off as it settled. The flip now waits for the recognizer to
+  leave `began`/`changed`/`ended`.
 - Animation forcing no longer applies to a native-zoom pop the router did not
   drive. 3.0 removed the forcing from the router-driven path, on the reasoning
   that a second, concurrent UIKit transition is what stops SwiftUI un-hiding the
@@ -18,12 +25,23 @@ All notable changes to KVRouterKit are documented in this file.
 
 ### Known Gaps
 
-- The forcing fix above is reasoned from the code, not from a reproduction: the
-  reported swipe-to-dismiss failure does not reproduce in the example app on the
-  iOS 26.2 simulator, either before or after it. Instrumenting the swizzle there
-  shows the swipe arriving as `popViewController(animated: true)`, so the forcing
-  is never consulted on that path and the branch above is not what that app hits.
-  A repro that shows the source hidden is still needed to close this out.
+- **The reported zoom-source bug is not this package's.** Begin the interactive
+  dismissal of an iOS 18+ zoom while its push is still animating, and the zoom
+  source ends up hidden: it keeps its slot in the layout and renders nothing.
+  Frame-by-frame it lands correctly and stays visible for ~2 seconds after the
+  animation has stopped, then disappears with nothing else on screen changing —
+  SwiftUI re-applies the hidden state long after the transition is over. It
+  reproduces on iOS 26.2 in a plain `NavigationStack` with
+  `matchedTransitionSource` and `.navigationTransition(.zoom:)` and no
+  KVRouterKit anywhere in the view tree, as readily as it does through the
+  router. Widen the window with Simulator's Slow Animations to hit it by hand.
+  Nothing in this package can prevent it; re-identifying the source view is what
+  clears it.
+- Neither fix above is therefore confirmed to change the reported symptom. The
+  gesture fix is a real robustness bug found while hunting this one — cancelling
+  a recognizer UIKit is driving a transition with is never right — and the
+  forcing fix is reasoned purely from the code, since the swipe arrives as
+  `popViewController(animated: true)` and forcing is never consulted on that path.
 
 ## 3.1.0 - 2026-08-12
 
