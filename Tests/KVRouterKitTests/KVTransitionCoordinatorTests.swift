@@ -228,7 +228,10 @@ final class KVTransitionCoordinatorTests: XCTestCase {
         ]
         coordinator.synchronizeControllerMetadata(in: navigationController)
 
-        coordinator.retainEntryMetadata(for: [])
+        // The router's path is cleaned up while UIKit is still popping. Nothing
+        // about that may invalidate the outgoing controller's metadata, or the
+        // pop loses its animator half-way through.
+        router.navigationEntries = []
 
         XCTAssertNotNil(
             coordinator.animator(
@@ -279,6 +282,54 @@ final class KVTransitionCoordinatorTests: XCTestCase {
                 to: root
             )
         )
+    }
+
+    // MARK: - Native zoom metadata lifetime
+
+    /// The reported bug: swipe-to-dismiss left the zoom source hidden while a
+    /// button dismiss was fine. The path changes when an interactive dismissal
+    /// *commits*, before its animation ends, and `usesNativeZoom(for:)` is what
+    /// keeps `.navigationTransition(.zoom:)` on the destination. Pruning on the
+    /// path change dropped it mid-dismissal; it must survive until the
+    /// transition reports finished.
+    func testNativeZoomMetadataSurvivesThePathChangeUntilTheTransitionFinishes() async throws {
+        guard #available(iOS 18.0, *) else {
+            throw XCTSkip("Native navigation zoom requires iOS 18 or newer")
+        }
+        let router = KVAppRouter()
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        coordinator.hasSource = { _ in true }
+        let navigationController = UINavigationController(
+            rootViewController: UIViewController()
+        )
+        coordinator.attach(to: navigationController)
+
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
+        await coordinator.perform(
+            KVTransitionRequest(
+                operation: .push,
+                from: nil,
+                to: entry,
+                transitionOverride: .zoom(sourceID: "card")
+            )
+        ) { router.navigationEntries = [entry] }
+        XCTAssertTrue(coordinator.usesNativeZoom(for: entry))
+
+        // The dismissal commits: the entry leaves the stack while its animation
+        // is still running.
+        router.navigationEntries = []
+
+        XCTAssertTrue(
+            coordinator.usesNativeZoom(for: entry),
+            "Zoom metadata must outlive the path change, or the destination loses .navigationTransition(.zoom:) mid-dismissal"
+        )
+
+        // UIKit reports the transition finished; now it can go.
+        coordinator.navigationControllerDidShow(navigationController)
+
+        XCTAssertFalse(coordinator.usesNativeZoom(for: entry))
+        XCTAssertEqual(coordinator.retainedNativeZoomEntryCount(), 0)
     }
 
     // MARK: - Animation forcing

@@ -67,11 +67,17 @@ migration guide, because effectively nobody depends on 2.x yet.
   replaced, and the drop is applied as a silent stack edit that no animator will
   claim. Both were needed -- storing the replace transition on the new entry made
   it play twice and made going back play it in reverse.
-- A native-zoom dismiss left the source view hidden, holding an empty slot in
-  the layout. The push needs `animated: true` forced onto UIKit, but the pop does
-  not: SwiftUI drives the zoom dismissal itself and passes `animated: false` on
-  purpose, so upgrading it ran a second, concurrent UIKit transition and SwiftUI
-  never un-hid `matchedTransitionSource`. Forcing is now push-only.
+- Swipe-to-dismiss on a zoom transition left the source view hidden, holding an
+  empty slot in the layout, while a button dismiss was fine. Zoom metadata was
+  pruned when the navigation path changed, which for an interactive dismissal is
+  when the gesture *commits* -- before its animation ends. The destination then
+  re-rendered without `.navigationTransition(.zoom:)` mid-dismissal and SwiftUI
+  never un-hid `matchedTransitionSource`. A button pop finished before the
+  re-render, which is why only the gesture showed it. Pruning now waits for UIKit
+  to report the transition finished.
+- Animation forcing on the native-zoom path is push-only. The push needs it
+  (SwiftUI hands UIKit `animated: false` and the zoom would not play); the pop
+  does not, since SwiftUI drives that dismissal itself.
 - A `UIView` was installed as `view.mask` for the reveal transition, on views
   that are `UIHostingController` views. UIKit logs that as unsupported and warns
   of a broken hierarchy; it is a `CALayer` mask now, which never enters the view
@@ -101,11 +107,10 @@ migration guide, because effectively nobody depends on 2.x yet.
 
 ### Known Gaps
 
-- The native-zoom source fix is reasoned from the symptom rather than reproduced
-  in a harness: the source view holding an empty slot in the layout is what
-  SwiftUI hiding `matchedTransitionSource` and never restoring it looks like, and
-  the concurrent UIKit transition was the only thing this package did to that
-  path. Confirm on a scrolled `LazyVGrid` before considering it closed.
+- The animated `replaceTop` drops the entry below the new top, which SwiftUI sees
+  as the element at that index changing. Whether it reuses the pushed screen's
+  hosting controller or rebuilds it is unverified; a rebuild would flash and reset
+  that screen's local state.
 
 ### Compatibility
 

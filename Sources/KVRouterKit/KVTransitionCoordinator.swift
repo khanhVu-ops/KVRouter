@@ -406,7 +406,20 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         clearNavigationAnimationIntent()
         completePendingTransition(cancelled: false)
         synchronizeControllerMetadata(in: navigationController)
+        // Prune here, not when the path changes. The path changes when an
+        // interactive dismissal *commits*, which is before its animation ends,
+        // and `usesNativeZoom(for:)` is what tells the destination to keep
+        // `.navigationTransition(.zoom:)`. Dropping the entry early re-rendered
+        // the destination without it mid-dismissal, and SwiftUI never un-hid the
+        // `matchedTransitionSource` — the source stayed invisible. A button pop
+        // was fast enough to finish before the re-render; a swipe was not.
+        pruneEntryMetadata()
         bridge?.refreshInteractivePopAvailability()
+    }
+
+    private func pruneEntryMetadata() {
+        guard let router else { return }
+        nativeZoomEntryIDs.formIntersection(Set(router.navigationEntries.map(\.id)))
     }
 
     func completePendingTransition(cancelled: Bool) {
@@ -414,9 +427,14 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         completePendingTransition(id: id, cancelled: cancelled)
     }
 
-    func retainEntryMetadata(for entryIDs: Set<UUID>) {
-        nativeZoomEntryIDs.formIntersection(entryIDs)
-        bridge?.refreshInteractivePopAvailability()
+    /// Whether `entry` was pushed with the system zoom, kept until its
+    /// transition finishes — see ``navigationControllerDidShow(_:)``.
+    ///
+    /// Without an attached bridge nothing prunes this, so the set grows by one
+    /// UUID per zoom push for the life of the process. That is the cheaper side
+    /// of the trade: pruning it on a path change is what broke swipe-to-dismiss.
+    func retainedNativeZoomEntryCount() -> Int {
+        nativeZoomEntryIDs.count
     }
 
     func canBeginInteractivePop() -> Bool {

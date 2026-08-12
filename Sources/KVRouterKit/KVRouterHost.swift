@@ -63,9 +63,6 @@ public struct KVRouterHost<Root: View>: View {
                 guard scenePhase != .active else { return }
                 coordinator.completePendingTransition(cancelled: true)
             }
-            .task(id: liveEntryIDs) {
-                coordinator.retainEntryMetadata(for: Set(liveEntryIDs))
-            }
             .environment(\.kvTransitionNamespace, transitionNamespace)
             .environment(\.kvTransitionSourceRegistry, sourceRegistry)
             .appRouter(router)
@@ -88,10 +85,6 @@ public struct KVRouterHost<Root: View>: View {
         ) { navigationController in
             coordinator.attach(to: navigationController)
         }
-    }
-
-    private var liveEntryIDs: [UUID] {
-        router.navigationEntries.map(\.id)
     }
 
     private var pathBinding: Binding<[KVNavigationEntry]> {
