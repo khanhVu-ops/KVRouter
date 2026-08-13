@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.2.1"
+        from: "3.3.0"
     )
 ]
 ```
@@ -274,6 +274,18 @@ Custom styles support interactive pop from the leading screen edge. System
 and native zoom transitions retain the system navigation gesture. When Reduce
 Motion is enabled, custom motion collapses to a short crossfade; native
 transitions defer to SwiftUI.
+
+To turn the back swipe off for the whole stack:
+
+```swift
+KVRouterHost(router: router, interactivePopEnabled: false) { HomeView() }
+```
+
+It covers both engines, and is read on every change, so it can be bound to
+state. Use it rather than disabling `interactivePopGestureRecognizer` yourself:
+the host owns that recognizer while it is attached and will set the value back.
+To deny a pop per screen instead, return `false` from a middleware's
+`willPop(from:to:)`.
 
 ### Animation Ownership and Performance
 
@@ -511,6 +523,7 @@ nothing.
 | Path changes | `replaceTop(with:)`, `replaceTop(with:transition:)`, `setPath` |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
+| Back swipe | `KVRouterHost(interactivePopEnabled:)`, `willPop(from:to:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |
 | Dependency graph | `KVUnhostedRouter` |
 | Restoration | `KVRestorableRoute`, `KVPathCodec` |

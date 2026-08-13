@@ -67,6 +67,17 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     private(set) var pendingTransaction: KVTransitionTransaction?
     var isBridgeAttached = false
     var reduceMotion = false
+    /// Host-level opt-out for back-swipe, covering both engines.
+    ///
+    /// The router owns UIKit's recognizer while it is attached, so an app that
+    /// disables it directly gets it turned back on at the next availability
+    /// refresh. This is the supported way to say no.
+    var interactivePopEnabled = true {
+        didSet {
+            guard interactivePopEnabled != oldValue else { return }
+            bridge?.refreshInteractivePopAvailability()
+        }
+    }
     var hasSource: (AnyHashable) -> Bool = { _ in false }
     weak var router: KVAppRouter? {
         didSet { bridge?.refreshInteractivePopAvailability() }
@@ -99,8 +110,12 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         }
     }
 
-    init(defaultTransition: KVNavigationTransition) {
+    init(
+        defaultTransition: KVNavigationTransition,
+        interactivePopEnabled: Bool = true
+    ) {
         self.defaultTransition = defaultTransition
+        self.interactivePopEnabled = interactivePopEnabled
     }
 
     func attach(to navigationController: UINavigationController) {
@@ -449,7 +464,8 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     }
 
     func canBeginInteractivePop() -> Bool {
-        guard pendingTransaction == nil,
+        guard interactivePopEnabled,
+              pendingTransaction == nil,
               let request = router?.interactivePopRequest() else {
             return false
         }

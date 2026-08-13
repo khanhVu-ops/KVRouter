@@ -141,13 +141,133 @@ final class KVInteractivePopGestureTests: XCTestCase {
         XCTAssertFalse(fixture.systemGesture.isEnabled)
     }
 
-    private func makeGestureFixture() -> (
+    /// `attach` runs from the host's `.introspect`, i.e. while the stack is at
+    /// root and UIKit keeps its own recognizer disabled because there is
+    /// nothing to pop back to. Snapshotting that and using it to gate the
+    /// enable latched the back swipe off forever — and since `.system` is the
+    /// default transition, that was every app that never picked a custom one.
+    func testSystemGestureIsReenabledEvenWhenItWasDisabledAtAttachTime() {
+        let fixture = makeGestureFixture(
+            defaultTransition: .system,
+            systemGestureEnabledAtAttach: false
+        )
+        fixture.systemGesture.stubbedState = .possible
+
+        fixture.controller.refreshAvailability()
+
+        XCTAssertTrue(
+            fixture.systemGesture.isEnabled,
+            "A stack at root when the router attached must still swipe back once it is deeper"
+        )
+    }
+
+    /// The host owns UIKit's recognizer while attached, so an app that wants no
+    /// back swipe has to say so through the router — and saying so has to reach
+    /// both engines, not just the custom one.
+    func testHostOptOutSilencesBothEnginesForACustomTransition() {
+        let fixture = makeGestureFixture(interactivePopEnabled: false)
+        fixture.systemGesture.stubbedState = .possible
+
+        fixture.controller.refreshAvailability()
+
+        XCTAssertFalse(fixture.systemGesture.isEnabled)
+        XCTAssertFalse(
+            fixture.controller.begin(),
+            "The custom engine must not drive a pop the host opted out of"
+        )
+    }
+
+    /// The `.system` path is the one that can regress silently: an opted-out
+    /// stack reads as "not custom", which is also what "UIKit's turn" looks
+    /// like.
+    func testHostOptOutSilencesTheSystemRecognizer() {
+        let fixture = makeGestureFixture(
+            defaultTransition: .system,
+            interactivePopEnabled: false
+        )
+        fixture.systemGesture.stubbedState = .possible
+
+        fixture.controller.refreshAvailability()
+
+        XCTAssertFalse(fixture.systemGesture.isEnabled)
+    }
+
+    /// The flag is bindable to state, so the opt-out has to be reversible.
+    func testTurningTheHostOptOutBackOnRestoresTheSystemRecognizer() {
+        let fixture = makeGestureFixture(
+            defaultTransition: .system,
+            interactivePopEnabled: false
+        )
+        fixture.systemGesture.stubbedState = .possible
+        fixture.controller.refreshAvailability()
+
+        fixture.coordinator.interactivePopEnabled = true
+        fixture.controller.refreshAvailability()
+
+        XCTAssertTrue(fixture.systemGesture.isEnabled)
+    }
+
+    /// Detaching gives UIKit's recognizer back enabled rather than restoring
+    /// what it read at attach — that read happens at root, where the recognizer
+    /// is off, so restoring it left a navigation controller that can never
+    /// swipe back.
+    func testDetachHandsTheSystemRecognizerBackEnabled() {
+        let fixture = makeGestureFixture(
+            defaultTransition: .system,
+            systemGestureEnabledAtAttach: false,
+            interactivePopEnabled: false
+        )
+        fixture.systemGesture.stubbedState = .possible
+        fixture.controller.refreshAvailability()
+        XCTAssertFalse(fixture.systemGesture.isEnabled)
+
+        fixture.controller.detach()
+
+        XCTAssertTrue(fixture.systemGesture.isEnabled)
+    }
+
+    /// End-to-end through the bridge rather than the stubs: setting the flag is
+    /// what refreshes availability, with no explicit call from the host.
+    func testFlippingTheFlagRefreshesAvailabilityThroughTheBridge() {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b")]
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        retained.append(router)
+        retained.append(coordinator)
+        let navigationController = UINavigationController()
+        navigationController.viewControllers = [
+            UIViewController(), UIViewController()
+        ]
+        // Deliberately not `loadViewIfNeeded()` first: `attach` has to reach
+        // UIKit's recognizer on its own, or the opt-out no-ops in silence.
+        coordinator.attach(to: navigationController)
+        let systemGesture = navigationController.interactivePopGestureRecognizer
+
+        coordinator.interactivePopEnabled = false
+
+        XCTAssertEqual(systemGesture?.isEnabled, false)
+
+        coordinator.interactivePopEnabled = true
+
+        XCTAssertEqual(systemGesture?.isEnabled, true)
+    }
+
+    private func makeGestureFixture(
+        defaultTransition: KVNavigationTransition = .depth,
+        systemGestureEnabledAtAttach: Bool = true,
+        interactivePopEnabled: Bool = true
+    ) -> (
         controller: KVInteractiveTransitionController,
+        coordinator: KVTransitionCoordinator,
         systemGesture: StubGestureRecognizer
     ) {
         let router = KVAppRouter()
         router.path = [.screen("a"), .screen("b")]
-        let coordinator = KVTransitionCoordinator(defaultTransition: .depth)
+        let coordinator = KVTransitionCoordinator(
+            defaultTransition: defaultTransition,
+            interactivePopEnabled: interactivePopEnabled
+        )
         coordinator.router = router
         retained.append(router)
         retained.append(coordinator)
@@ -156,13 +276,14 @@ final class KVInteractivePopGestureTests: XCTestCase {
             UIViewController(), UIViewController()
         ]
         let systemGesture = StubGestureRecognizer()
+        systemGesture.isEnabled = systemGestureEnabledAtAttach
         let controller = KVInteractiveTransitionController(
             coordinator: coordinator,
             percentDrivenFactory: { RecordingPercentDrivenTransition() },
             systemGestureResolver: { _ in systemGesture }
         )
         controller.attach(to: navigationController)
-        return (controller, systemGesture)
+        return (controller, coordinator, systemGesture)
     }
 
     private func makeFixture(

@@ -2,6 +2,32 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.3.0 - 2026-08-13
+
+### Fixed
+
+- The leading-edge back swipe works again on `.system`, the default transition —
+  so on any app that never picked a custom one. `attach(to:)` snapshotted
+  `interactivePopGestureRecognizer.isEnabled` and then used that snapshot to gate
+  every later enable. It runs from the host's `.introspect`, i.e. while the stack
+  is at its root and UIKit keeps the recognizer disabled because there is nothing
+  to pop back to, so the snapshot was `false` and never re-read: the gesture was
+  latched off for the life of the navigation controller. UIKit gates its own
+  recognizer through the delegate it installs, so the router now enables it
+  whenever it is not driving the pop itself, and hands it back enabled on
+  `detach()` rather than restoring that same misleading capture. Custom
+  transitions were unaffected: they run the package's own recognizer.
+
+### Added
+
+- `KVRouterHost(interactivePopEnabled:)` turns the back swipe off for the whole
+  stack, covering both the custom engine and UIKit's recognizer. The router owns
+  that recognizer while it is attached, so an app setting `isEnabled = false` on
+  it directly has the value overwritten at the next availability refresh; this is
+  the supported way to say no. It is read on every change, so it can be bound to
+  state. To deny a pop per screen instead, return `false` from a middleware's
+  `willPop(from:to:)`.
+
 ## 3.2.1 - 2026-08-12
 
 ### Fixed

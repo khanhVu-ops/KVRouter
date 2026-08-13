@@ -13,20 +13,33 @@ public struct KVRouterHost<Root: View>: View {
     private let root: Root
     private let ignoreKeyboard: Bool
     private let defaultTransition: KVNavigationTransition
+    private let interactivePopEnabled: Bool
 
+    /// - Parameter interactivePopEnabled: Whether a leading-edge swipe pops.
+    ///   Applies to the whole stack and to both engines — the custom one and
+    ///   UIKit's own recognizer, which the host owns while it is attached.
+    ///   Setting `interactivePopGestureRecognizer.isEnabled` yourself does not
+    ///   stick; use this. To deny a pop per screen instead, return `false` from
+    ///   a middleware's `willPop(from:to:)`.
     public init(
         router: KVAppRouter,
         ignoreKeyboard: Bool = true,
         defaultTransition: KVNavigationTransition = .system,
+        interactivePopEnabled: Bool = true,
         @ViewBuilder root: () -> Root
     ) {
         self.router = router
         self.ignoreKeyboard = ignoreKeyboard
         self.defaultTransition = defaultTransition
+        self.interactivePopEnabled = interactivePopEnabled
         self.root = root()
+        // Seeded here as well as pushed in `body`: the introspect callback can
+        // attach before the first `task` runs, and an app that opted out should
+        // never see a frame where the gesture is live.
         _coordinator = StateObject(
             wrappedValue: KVTransitionCoordinator(
-                defaultTransition: defaultTransition
+                defaultTransition: defaultTransition,
+                interactivePopEnabled: interactivePopEnabled
             )
         )
         _sourceRegistry = StateObject(
@@ -58,6 +71,11 @@ public struct KVRouterHost<Root: View>: View {
             }
             .task(id: reduceMotion) {
                 coordinator.reduceMotion = reduceMotion
+            }
+            // The `StateObject` seed only covers the first host; this is what
+            // makes the flag bindable to state afterwards.
+            .task(id: interactivePopEnabled) {
+                coordinator.interactivePopEnabled = interactivePopEnabled
             }
             .task(id: scenePhase) {
                 guard scenePhase != .active else { return }

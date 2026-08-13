@@ -6,7 +6,6 @@ final class KVInteractiveTransitionController: NSObject,
     private weak var coordinator: KVTransitionCoordinator?
     private weak var navigationController: UINavigationController?
     private weak var systemEdgePanGesture: UIGestureRecognizer?
-    private var systemEdgePanWasEnabled = true
     private let percentDrivenFactory: () -> UIPercentDrivenInteractiveTransition
     private let systemGestureResolver: (UINavigationController) -> UIGestureRecognizer?
     private let edgePanGesture = UIScreenEdgePanGestureRecognizer()
@@ -46,8 +45,13 @@ final class KVInteractiveTransitionController: NSObject,
         }
         detach()
         self.navigationController = navigationController
+        // `interactivePopGestureRecognizer` is nil until the view loads, and the
+        // reference here is weak — resolving too early hands back nothing and
+        // every later enable/disable silently no-ops. Introspect only reports an
+        // on-screen stack, so in practice this is already a no-op; it keeps
+        // `attach` from depending on that.
+        navigationController.loadViewIfNeeded()
         systemEdgePanGesture = systemGestureResolver(navigationController)
-        systemEdgePanWasEnabled = systemEdgePanGesture?.isEnabled ?? true
         navigationController.view.addGestureRecognizer(edgePanGesture)
         refreshEdge()
         refreshAvailability()
@@ -61,17 +65,34 @@ final class KVInteractiveTransitionController: NSObject,
         if edgePanGesture.view != nil {
             edgePanGesture.view?.removeGestureRecognizer(edgePanGesture)
         }
-        systemEdgePanGesture?.isEnabled = systemEdgePanWasEnabled
+        // Handed back enabled, not restored to a value captured at attach: the
+        // capture was taken while the stack sat at root, where UIKit keeps its
+        // own recognizer off, so "restoring" it meant leaving a dead back swipe
+        // behind. UIKit gates the recognizer itself, so enabled is the honest
+        // hand-back — and the only state that matters is the one the router set
+        // while it owned it.
+        systemEdgePanGesture?.isEnabled = true
         systemEdgePanGesture = nil
         navigationController = nil
         resetSession()
     }
 
     func refreshAvailability() {
+        // `canBeginInteractivePop()` already reads false when the host opted
+        // out, so the custom pan needs no extra guard — but the system
+        // recognizer would then read that as "UIKit's turn" and switch on.
+        let allowsInteractivePop = coordinator?.interactivePopEnabled ?? true
         let usesCustomInteraction = coordinator?.canBeginInteractivePop() == true
         edgePanGesture.isEnabled = usesCustomInteraction
+        // Otherwise enable unconditionally: UIKit gates its own recognizer
+        // through the delegate it installs, so it still refuses at the root.
+        // This used to be gated on the recognizer's `isEnabled` as captured in
+        // `attach` — which runs from the host's `.introspect` while the stack is
+        // at root and UIKit has the recognizer off. The capture was therefore
+        // `false`, and was never re-read: the back swipe stayed latched off for
+        // the lifetime of the navigation controller.
         setSystemGesture(
-            enabled: systemEdgePanWasEnabled && !usesCustomInteraction
+            enabled: allowsInteractivePop && !usesCustomInteraction
         )
         refreshEdge()
     }
