@@ -172,4 +172,19 @@ final class KVRouterRegressionTests: XCTestCase {
         XCTAssertNil(router.topRoute)
         XCTAssertTrue(router.routes.isEmpty)
     }
+
+    /// 3.2.0 shipped the placeholder with an initializer that inherited the
+    /// class's `@MainActor`, which made it unusable in the one place it exists
+    /// for. `NonisolatedDependencyGraph` below is the guard: it only compiles
+    /// while `init` stays `nonisolated`, and no runtime assertion can catch this.
+    func testUnhostedRouterIsReachableFromANonisolatedDependencyGraph() {
+        XCTAssertEqual(NonisolatedDependencyGraph.router.stackDepth, 0)
+    }
+}
+
+/// A dependency key's default value is a `nonisolated static`. Constructing the
+/// placeholder here is the whole point of it, so this declaration doubles as a
+/// compile-time regression test.
+private enum NonisolatedDependencyGraph {
+    static let router: any KVRouting = KVUnhostedRouter()
 }

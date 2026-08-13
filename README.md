@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.2.0"
+        from: "3.2.1"
     )
 ]
 ```
@@ -362,6 +362,8 @@ debug build at the cause instead of looking like a dead button.
 
 ```swift
 enum AppDependencies {
+    // `init` is nonisolated, so this works in a nonisolated static — which is
+    // what a dependency key's default value is.
     static var router: any KVRouting = KVUnhostedRouter()
 }
 ```

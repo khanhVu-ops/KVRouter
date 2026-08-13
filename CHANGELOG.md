@@ -2,7 +2,19 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
-## 3.2.0 - 2026-08-12
+## 3.2.1 - 2026-08-12
+
+### Fixed
+
+- `KVUnhostedRouter.init()` is `nonisolated`, so the placeholder can be
+  constructed where it is meant to be: the default value of a dependency key,
+  which is a `nonisolated static`. Shipped in 3.2.0 inheriting the class's
+  `@MainActor`, which made every intended use — including the example in its own
+  documentation — fail with *main actor-isolated default value in a nonisolated
+  context*. Nothing about the initializer needs the isolation; it sets one stored
+  `Bool`. A `nonisolated static` declaration in the tests now constructs it, so
+  the mistake cannot come back: no runtime assertion can catch a call that does
+  not compile.
 
 ### Added
 

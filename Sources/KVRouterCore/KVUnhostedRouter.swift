@@ -23,6 +23,8 @@ import Foundation
 ///
 /// ```swift
 /// enum AppDependencies {
+///     // `init` is nonisolated, so this compiles in a nonisolated static —
+///     // which is what a dependency key's default value is.
 ///     static var router: any KVRouting = KVUnhostedRouter()
 /// }
 /// ```
@@ -39,7 +41,15 @@ public final class KVUnhostedRouter: KVRouting {
 
     private var hasReported = false
 
-    public init() {}
+    /// `nonisolated` on purpose, and load-bearing.
+    ///
+    /// The place this type exists for is the default value of a dependency key,
+    /// which is a `nonisolated static` — so an initializer that inherited the
+    /// class's `@MainActor` isolation could not be called there at all:
+    /// *main actor-isolated default value in a nonisolated context*. Nothing here
+    /// needs the isolation: the initializer sets one stored `Bool` and touches no
+    /// state the main actor is protecting.
+    nonisolated public init() {}
 
     // MARK: - State
 
