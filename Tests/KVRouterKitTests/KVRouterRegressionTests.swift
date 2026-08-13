@@ -161,4 +161,15 @@ final class KVRouterRegressionTests: XCTestCase {
         // The commands themselves assert in debug, which is the point; only the
         // inert state is safe to observe here.
     }
+
+    /// The `KVRouting`-level counterpart, for a dependency graph that needs a
+    /// placeholder before the composition root has built a router. Same trade as
+    /// above: the commands assert, so only the inert state is observable.
+    func testUnhostedRouterExposesAnEmptyStackThroughThePort() {
+        let router: any KVRouting = KVUnhostedRouter()
+
+        XCTAssertEqual(router.stackDepth, 0)
+        XCTAssertNil(router.topRoute)
+        XCTAssertTrue(router.routes.isEmpty)
+    }
 }

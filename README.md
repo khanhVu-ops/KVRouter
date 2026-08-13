@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.1.0"
+        from: "3.2.0"
     )
 ]
 ```
@@ -355,6 +355,21 @@ ProductListViewModel(router: router).didTapProduct(42)
 View code that needs `pushView { }` or a per-navigation transition takes
 `any KVViewRouting` instead — the same port plus the view-layer commands.
 
+A dependency graph needs a value for `any KVRouting` before the composition root
+has built one. `KVUnhostedRouter` is that placeholder: every command is a no-op
+that trips `assertionFailure` once, naming the command, so missing wiring stops a
+debug build at the cause instead of looking like a dead button.
+
+```swift
+enum AppDependencies {
+    static var router: any KVRouting = KVUnhostedRouter()
+}
+```
+
+It ships in `KVRouterCore`, so a presentation module that never imports SwiftUI
+can use it. `KVRouterSpy` is the other direction — it records commands instead of
+complaining, which is what a test wants and not what an app's graph wants.
+
 A ViewModel can also ask where it is, via `stackDepth` and `topRoute`:
 
 ```swift
@@ -495,6 +510,7 @@ nothing.
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
 | Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |
+| Dependency graph | `KVUnhostedRouter` |
 | Restoration | `KVRestorableRoute`, `KVPathCodec` |
 | Testing | `KVRouterSpy`, `settle()` |
 

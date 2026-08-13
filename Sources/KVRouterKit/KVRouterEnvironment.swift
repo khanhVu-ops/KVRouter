@@ -17,6 +17,13 @@ import KVRouterCore
 /// The old default was a real, unhosted ``KVAppRouter``: pushes went into an
 /// invisible stack and simply never appeared, with no crash and no log. A
 /// no-op that says so is far easier to diagnose.
+///
+/// Deliberately not built on `KVUnhostedRouter`: this one answers a different
+/// question ("no host above this view") and conforms to the richer
+/// ``KVViewRouting``, and sharing the six lines of assert plumbing would mean
+/// exposing a seam on that public type purely for internal reuse. Reach for
+/// `KVUnhostedRouter` when a dependency graph needs a placeholder for
+/// `any KVRouting` before a router exists.
 @MainActor
 final class KVNullRouter: KVViewRouting {
 

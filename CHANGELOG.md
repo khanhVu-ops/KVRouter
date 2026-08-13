@@ -2,6 +2,20 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.2.0 - 2026-08-12
+
+### Added
+
+- `KVUnhostedRouter`: a public placeholder for `any KVRouting`, in
+  `KVRouterCore`. A dependency graph needs a value before the composition root
+  builds a router, and both obvious candidates are bad — a real unhosted
+  `KVAppRouter` swallows pushes into an invisible stack, and a silent no-op reads
+  as a broken button. This one no-ops and trips `assertionFailure` on the first
+  command, naming it. Apps were writing this class themselves because
+  `KVNullRouter` is internal, and would not fit anyway: it lives in
+  `KVRouterKit`, imports SwiftUI, conforms to the richer `KVViewRouting`, and
+  diagnoses a different problem (a view with no host above it).
+
 ## 3.1.1 - 2026-08-12
 
 ### Fixed
