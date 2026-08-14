@@ -3,6 +3,13 @@ import SwiftUIIntrospect
 
 /// Root host that binds ``KVAppRouter`` to one stable `NavigationStack`.
 public struct KVRouterHost<Root: View>: View {
+
+    /// Default hit region for the back swipe on custom-transition screens: one
+    /// standard touch target in from the leading edge.
+    public static var defaultInteractivePopEdgeWidth: CGFloat {
+        KVInteractiveTransitionController.defaultEdgeWidth
+    }
+
     @ObservedObject private var router: KVAppRouter
     @StateObject private var coordinator: KVTransitionCoordinator
     @StateObject private var sourceRegistry: KVTransitionSourceRegistry
@@ -15,6 +22,7 @@ public struct KVRouterHost<Root: View>: View {
     private let ignoreKeyboard: Bool
     private let defaultTransition: KVNavigationTransition
     private let interactivePopEnabled: Bool
+    private let interactivePopEdgeWidth: CGFloat
 
     /// - Parameter interactivePopEnabled: Whether a leading-edge swipe pops.
     ///   Applies to the whole stack and to both engines — the custom one and
@@ -22,17 +30,26 @@ public struct KVRouterHost<Root: View>: View {
     ///   Setting `interactivePopGestureRecognizer.isEnabled` yourself does not
     ///   stick; use this. To deny a pop per screen instead, return `false` from
     ///   a middleware's `willPop(from:to:)`.
+    /// - Parameter interactivePopEdgeWidth: How far in from the leading edge a
+    ///   back swipe may start, for screens using a **custom** transition — those
+    ///   are driven by the router's own recognizer, and this is its hit region.
+    ///   Widen it to make the swipe easier to catch, narrow it if it argues with
+    ///   content near the edge such as a horizontally scrolling row. Screens on
+    ///   `.system` are swiped with UIKit's own recognizer, whose region UIKit
+    ///   owns, so this does not apply to them.
     public init(
         router: KVAppRouter,
         ignoreKeyboard: Bool = true,
         defaultTransition: KVNavigationTransition = .system,
         interactivePopEnabled: Bool = true,
+        interactivePopEdgeWidth: CGFloat = KVRouterHost.defaultInteractivePopEdgeWidth,
         @ViewBuilder root: () -> Root
     ) {
         self.router = router
         self.ignoreKeyboard = ignoreKeyboard
         self.defaultTransition = defaultTransition
         self.interactivePopEnabled = interactivePopEnabled
+        self.interactivePopEdgeWidth = interactivePopEdgeWidth
         self.root = root()
         // Seeded here as well as pushed in `body`: the introspect callback can
         // attach before the first `task` runs, and an app that opted out should
@@ -84,6 +101,9 @@ public struct KVRouterHost<Root: View>: View {
             // makes the flag bindable to state afterwards.
             .task(id: interactivePopEnabled) {
                 coordinator.interactivePopEnabled = interactivePopEnabled
+            }
+            .task(id: interactivePopEdgeWidth) {
+                coordinator.interactivePopEdgeWidth = interactivePopEdgeWidth
             }
             .task(id: scenePhase) {
                 guard scenePhase != .active else { return }

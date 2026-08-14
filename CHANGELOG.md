@@ -2,9 +2,39 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
-## Unreleased
+## 3.5.0 - 2026-08-14
+
+### Added
+
+- `KVRouterHost(interactivePopEdgeWidth:)` sets how far in from the leading edge a
+  back swipe may start on screens using a **custom** transition — the ones the
+  router's own recognizer drives. Defaults to 44 points, one standard touch target,
+  and is read on every change so it can be bound to state. Widen it if the swipe is
+  hard to catch, narrow it if it argues with content near the edge such as a
+  horizontally scrolling row or a slider. `.system` and native zoom screens are
+  swiped with UIKit's own recognizer, whose region UIKit owns, so it does not apply
+  to them.
 
 ### Fixed
+
+- The back swipe on custom-transition screens is much easier to catch. It used to
+  demand a drag starting within a few points of the bezel **and** a fast one, which
+  is why it felt so much worse than the system swipe. Two separate causes:
+
+  The recognizer was a `UIScreenEdgePanGestureRecognizer`, whose hit region belongs
+  to UIKit and cannot be widened by any API. It is now a plain
+  `UIPanGestureRecognizer` with the region enforced in
+  `gestureRecognizerShouldBegin`, which is what made the width above settable at
+  all.
+
+  And that check read the pan's **velocity** to decide direction. A slow,
+  deliberate drag carries almost none by the time UIKit asks, so it was rejected
+  outright — the swipe worked only if you flicked. Direction now comes from
+  translation, with velocity as a tie-break only when translation is still zero.
+
+  One trade-off worth knowing: a plain pan does not get the touch-delaying UIKit
+  grants a screen-edge recognizer, so content sitting right against the leading
+  edge can now compete with the swipe. That is what the width parameter is for.
 
 - The leading-edge back swipe works on `.system`, the default transition — so on
   any app that never picked a custom one. 3.3.0 claimed this fix and did not

@@ -347,6 +347,19 @@ the host owns that recognizer while it is attached and will set the value back.
 To deny a pop per screen instead, return `false` from a middleware's
 `willPop(from:to:)`.
 
+Screens on a **custom** transition are swiped with the package's own recognizer,
+and how far in from the leading edge that swipe may start is yours to set:
+
+```swift
+KVRouterHost(router: router, interactivePopEdgeWidth: 60) { HomeView() }
+```
+
+The default is 44 points — one standard touch target. Widen it if the swipe is
+hard to catch, narrow it if it argues with content near the edge such as a
+horizontally scrolling row or a slider. It does not apply to `.system` or native
+zoom screens: those are swiped with UIKit's own recognizer, whose region UIKit
+owns.
+
 ### Animation Ownership and Performance
 
 KVRouterKit keeps one live `NavigationStack` hierarchy and animates only

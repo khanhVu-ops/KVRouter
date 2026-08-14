@@ -93,6 +93,12 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             bridge?.refreshInteractivePopAvailability()
         }
     }
+    /// How far in from the leading edge a custom-transition pop swipe may start.
+    ///
+    /// Only the router's own recognizer honours this. On `.system` the swipe is
+    /// UIKit's, and its edge region is UIKit's business.
+    var interactivePopEdgeWidth = KVInteractiveTransitionController.defaultEdgeWidth
+
     var hasSource: (AnyHashable) -> Bool = { _ in false }
     weak var router: KVAppRouter? {
         didSet { bridge?.refreshInteractivePopAvailability() }

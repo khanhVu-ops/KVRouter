@@ -10,6 +10,74 @@ final class KVInteractivePopGestureTests: XCTestCase {
     /// both — and every interactive-pop check then reads false. Park them here.
     private var retained: [AnyObject] = []
 
+    // MARK: - Where a pop swipe may start, and which drags count
+
+    /// Drives `gestureRecognizerShouldBegin` for a drag starting `startX` points
+    /// in from the leading edge.
+    private func shouldBegin(
+        startX: CGFloat,
+        translation: CGPoint = CGPoint(x: 12, y: 0),
+        velocity: CGPoint = CGPoint(x: 300, y: 0),
+        edgeWidth: CGFloat? = nil
+    ) -> Bool {
+        let fixture = makeGestureFixture()
+        if let edgeWidth {
+            fixture.coordinator.interactivePopEdgeWidth = edgeWidth
+        }
+        let pan = StubPanGestureRecognizer()
+        pan.stubLocation = CGPoint(x: startX, y: 300)
+        pan.stubTranslation = translation
+        pan.stubVelocity = velocity
+        return fixture.controller.gestureRecognizerShouldBegin(pan)
+    }
+
+    func testAPopSwipeMayStartAnywhereInsideTheEdgeWidth() {
+        XCTAssertTrue(shouldBegin(startX: 0))
+        XCTAssertTrue(shouldBegin(startX: 20))
+        // The point of the change: a screen-edge recognizer never saw this far in.
+        XCTAssertTrue(shouldBegin(startX: 43))
+    }
+
+    func testAPopSwipeStartingBeyondTheEdgeWidthIsIgnored() {
+        XCTAssertFalse(shouldBegin(startX: 45))
+        XCTAssertFalse(shouldBegin(startX: 200))
+    }
+
+    func testTheEdgeWidthIsConfigurable() {
+        XCTAssertFalse(shouldBegin(startX: 100))
+        XCTAssertTrue(shouldBegin(startX: 100, edgeWidth: 120))
+        // Narrowing it back down has to bite too.
+        XCTAssertFalse(shouldBegin(startX: 20, edgeWidth: 8))
+    }
+
+    /// A slow, deliberate drag carries almost no velocity by the time UIKit asks.
+    /// Gating on velocity alone rejected it, which is half of why this swipe was
+    /// harder to catch than the system one.
+    func testASlowDragStillBegins() {
+        XCTAssertTrue(
+            shouldBegin(
+                startX: 10,
+                translation: CGPoint(x: 9, y: 0),
+                velocity: .zero
+            )
+        )
+    }
+
+    func testAVerticalOrBackwardDragDoesNotBegin() {
+        // Mostly vertical: belongs to whatever scrolls.
+        XCTAssertFalse(
+            shouldBegin(startX: 10, translation: CGPoint(x: 3, y: 40))
+        )
+        // Towards the trailing edge: not a back swipe.
+        XCTAssertFalse(
+            shouldBegin(
+                startX: 10,
+                translation: CGPoint(x: -20, y: 0),
+                velocity: CGPoint(x: -300, y: 0)
+            )
+        )
+    }
+
     func testProgressClampsAndNormalizesLayoutDirection() {
         XCTAssertEqual(
             KVInteractiveTransitionController.progress(
@@ -332,6 +400,19 @@ private struct DenyPopMiddleware: KVRouteMiddleware {
 }
 
 @MainActor
+/// Lets a test say exactly where a pan started and which way it went. The real
+/// recognizer derives these from touches, which cannot be synthesised in a unit
+/// test — and, as it turns out, not by simulator automation either.
+private final class StubPanGestureRecognizer: UIPanGestureRecognizer {
+    var stubLocation: CGPoint = .zero
+    var stubTranslation: CGPoint = .zero
+    var stubVelocity: CGPoint = .zero
+
+    override func location(in view: UIView?) -> CGPoint { stubLocation }
+    override func translation(in view: UIView?) -> CGPoint { stubTranslation }
+    override func velocity(in view: UIView?) -> CGPoint { stubVelocity }
+}
+
 private final class RecordingNavigationController: UINavigationController {
     private(set) var popCount = 0
 

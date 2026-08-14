@@ -8,7 +8,15 @@ final class KVInteractiveTransitionController: NSObject,
     private weak var systemEdgePanGesture: UIGestureRecognizer?
     private let percentDrivenFactory: () -> UIPercentDrivenInteractiveTransition
     private let systemGestureResolver: (UINavigationController) -> UIGestureRecognizer?
-    private let edgePanGesture = UIScreenEdgePanGestureRecognizer()
+    /// A plain pan, not a `UIScreenEdgePanGestureRecognizer`.
+    ///
+    /// The screen-edge recognizer's hit region is UIKit's own and cannot be
+    /// widened, and it is narrow enough that the swipe only answered within a few
+    /// points of the bezel — noticeably harder than the system back swipe, which
+    /// is what an app gets on `.system`. A plain pan puts the region under our
+    /// control: ``edgeWidth`` decides it, and `gestureRecognizerShouldBegin`
+    /// enforces it along with the direction checks that were already there.
+    private let edgePanGesture = UIPanGestureRecognizer()
     private var systemGestureRetry: Task<Void, Never>?
 
     private(set) var percentDriven: UIPercentDrivenInteractiveTransition?
@@ -53,7 +61,6 @@ final class KVInteractiveTransitionController: NSObject,
         navigationController.loadViewIfNeeded()
         systemEdgePanGesture = systemGestureResolver(navigationController)
         navigationController.view.addGestureRecognizer(edgePanGesture)
-        refreshEdge()
         refreshAvailability()
     }
 
@@ -94,7 +101,6 @@ final class KVInteractiveTransitionController: NSObject,
         setSystemGesture(
             enabled: allowsInteractivePop && !usesCustomInteraction
         )
-        refreshEdge()
     }
 
     /// Toggles UIKit's own back-swipe recognizer, but never mid-recognition.
@@ -252,15 +258,30 @@ final class KVInteractiveTransitionController: NSObject,
               let pan = gestureRecognizer as? UIPanGestureRecognizer else {
             return false
         }
-        let velocity = pan.velocity(in: navigationController.view)
-        let isRightToLeft = navigationController.view
-            .effectiveUserInterfaceLayoutDirection == .rightToLeft
-        let leadingVelocity = isRightToLeft ? -velocity.x : velocity.x
-        return leadingVelocity > 0 && abs(velocity.x) > abs(velocity.y)
+        let view = navigationController.view!
+        // The screen-edge recognizer enforced this itself; a plain pan does not.
+        guard isWithinLeadingEdge(pan.location(in: view), in: view) else {
+            return false
+        }
+        let isRightToLeft = view.effectiveUserInterfaceLayoutDirection
+            == .rightToLeft
+        let translation = pan.translation(in: view)
+        let velocity = pan.velocity(in: view)
+        let signed = { (value: CGFloat) in isRightToLeft ? -value : value }
+
+        // Direction comes from translation, with velocity only as a tie-break.
+        // Gating on velocity alone rejected a slow, deliberate drag — it has
+        // almost none by the time UIKit asks — which was the other half of why
+        // this swipe was harder to catch than the system one.
+        if translation != .zero {
+            return signed(translation.x) > 0
+                && abs(translation.x) >= abs(translation.y)
+        }
+        return signed(velocity.x) > 0 && abs(velocity.x) > abs(velocity.y)
     }
 
     @objc
-    private func handleEdgePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
+    private func handleEdgePan(_ gesture: UIPanGestureRecognizer) {
         guard let view = gesture.view else { return }
         let translation = gesture.translation(in: view).x
         let velocity = gesture.velocity(in: view).x
@@ -314,12 +335,26 @@ final class KVInteractiveTransitionController: NSObject,
         }
     }
 
-    private func refreshEdge() {
-        guard let navigationController else { return }
-        edgePanGesture.edges = navigationController.view
-            .effectiveUserInterfaceLayoutDirection == .rightToLeft
-            ? .right
-            : .left
+    /// How far in from the leading edge a pop swipe may start.
+    ///
+    /// Wider is easier to hit and more likely to argue with content near the edge
+    /// — a horizontally scrolling row, a slider. The default is one standard touch
+    /// target, which is comfortably easier than the screen-edge recognizer this
+    /// replaced without reaching far into the screen.
+    static let defaultEdgeWidth: CGFloat = 44
+
+    private var edgeWidth: CGFloat {
+        coordinator?.interactivePopEdgeWidth ?? Self.defaultEdgeWidth
+    }
+
+    /// Whether `location` is inside the leading strip, in `view`'s coordinates.
+    private func isWithinLeadingEdge(_ location: CGPoint, in view: UIView) -> Bool {
+        let isRightToLeft = view.effectiveUserInterfaceLayoutDirection
+            == .rightToLeft
+        let distance = isRightToLeft
+            ? view.bounds.maxX - location.x
+            : location.x - view.bounds.minX
+        return distance >= 0 && distance <= edgeWidth
     }
 
     private func resetSession() {

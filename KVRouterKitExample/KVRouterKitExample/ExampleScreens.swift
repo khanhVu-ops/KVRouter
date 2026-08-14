@@ -49,7 +49,7 @@ struct TransitionDemoDetail: View {
                         .multilineTextAlignment(.center)
                 }
 
-                Text("Swipe from the leading 24-point edge or use the button to preview pop.")
+                Text("Swipe from the leading edge or use the button to preview pop.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
