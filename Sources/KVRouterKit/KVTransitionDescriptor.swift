@@ -29,7 +29,6 @@ struct KVTransitionEndpoint {
     let state: KVTransitionViewState
 }
 
-@MainActor
 extension KVNavigationTransition {
     func descriptor(
         operation: KVTransitionOperation,

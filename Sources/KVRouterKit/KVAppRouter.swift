@@ -123,8 +123,21 @@ public final class KVAppRouter: ObservableObject {
         }
     }
 
+    /// Route-level transition defaults, declared with `.kvRoutes`.
+    ///
+    /// Weak because the registry belongs to the view tree: a router that outlives
+    /// its host must not keep a dead one alive.
+    weak var routeRegistry: KVRouteRegistry?
+
+    /// The transition `entry` animates with, or `nil` to use the host's default.
+    ///
+    /// The single funnel for that question — every push, pop and pop-to path
+    /// reads it, and so does the host when it decides whether the screen gets
+    /// native zoom. Precedence: what the call site asked for, then what the
+    /// route type declared, then (via `nil`) the host's `defaultTransition`.
     func transitionOverride(for entry: KVNavigationEntry) -> KVNavigationTransition? {
-        transitionOverrides[entry.id]
+        if let callSite = transitionOverrides[entry.id] { return callSite }
+        return routeRegistry?.transition(for: entry.route.base)
     }
 
     /// Middleware chain for route interception.

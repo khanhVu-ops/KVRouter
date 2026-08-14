@@ -2,6 +2,46 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.4.0 - 2026-08-14
+
+### Added
+
+- `routes.register(_:transition:destination:)` and
+  `routes.registerTransition(_:_:)` declare the transition a route type animates
+  with, so motion that belongs to a screen is stated once where the screen is
+  wired up rather than repeated at every `push`. Resolution runs most-specific
+  first: a `transition:` on the call site, then the route type's, then the host's
+  `defaultTransition`. The per-value form returns an optional, so one case of a
+  route enum can zoom while its siblings keep the host default.
+
+  It resolves through `transitionOverride(for:)`, the one place every push, pop
+  and pop-to path already asks that question, which is why it also covers
+  back-swipes and entries that never went through `push` — a restored path or a
+  deep link picks up route defaults too.
+
+- `KVNavigationTransition` is `Sendable` and no longer `@MainActor`. It can now
+  be stored in a `Sendable` type — which is what a route-level default is — and
+  `.fade` and friends are reachable off the main actor without an `await`. None
+  of what it holds was ever UIKit state; turning one into an actual animation
+  still happens on the main actor.
+
+### Changed
+
+- **Breaking, narrowly:** `KVNavigationTransition.zoom(sourceID:)` now requires
+  `Hashable & Sendable` rather than `Hashable`. `AnyHashable` is not `Sendable`,
+  so storing one is what kept the transition off `Sendable`; the id is held in a
+  constrained existential instead and erased only where it reaches the source
+  registry or SwiftUI. `String`, `Int`, `UUID` and plain enums already qualify.
+  `kvTransitionSource(id:)` is unchanged.
+
+### Documentation
+
+- `.kvRoutes` documents that its closure runs **exactly once** per view
+  identity, and that a destination capturing surrounding state therefore freezes
+  it at the first render — a failure with no warning and no crash. Both the
+  symbol doc and the README now show the fix: pass identity, and let the
+  destination read the live value.
+
 ## 3.3.0 - 2026-08-13
 
 ### Fixed

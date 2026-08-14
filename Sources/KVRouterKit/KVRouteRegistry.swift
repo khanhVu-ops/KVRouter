@@ -32,6 +32,9 @@ import KVRouterCore
 public final class KVRouteRegistry {
 
     private var builders: [ObjectIdentifier: (any KVRoute) -> AnyView?] = [:]
+    private var transitions: [
+        ObjectIdentifier: (any KVRoute) -> KVNavigationTransition?
+    ] = [:]
     private var isConfigured = false
 
     public init() {}
@@ -52,9 +55,53 @@ public final class KVRouteRegistry {
         }
     }
 
+    /// Register the destination for a route type, and the transition it animates
+    /// with by default.
+    ///
+    /// Saves repeating `transition:` at every call site: a modal-feeling route
+    /// declares its motion once, here, and `router.push(route)` picks it up.
+    /// A `transition:` passed to `push` still wins for that one navigation.
+    /// - Parameters:
+    ///   - type: The route type to handle.
+    ///   - transition: How routes of this type animate unless the call site says
+    ///     otherwise.
+    ///   - destination: Builds the view for a given route value.
+    public func register<R: KVRoute, V: View>(
+        _ type: R.Type,
+        transition: KVNavigationTransition,
+        @ViewBuilder destination: @escaping (R) -> V
+    ) {
+        register(type, destination: destination)
+        registerTransition(type) { _ in transition }
+    }
+
+    /// Register a default transition that varies by route value.
+    ///
+    /// For route types whose cases want different motion — a detail screen that
+    /// zooms out of its cell, siblings that slide. Return `nil` for the cases
+    /// that should keep the host's `defaultTransition`.
+    ///
+    /// Independent of ``register(_:destination:)``: call either order, and
+    /// registering a transition for an unregistered route type is harmless.
+    public func registerTransition<R: KVRoute>(
+        _ type: R.Type,
+        _ transition: @escaping (R) -> KVNavigationTransition?
+    ) {
+        transitions[ObjectIdentifier(R.self)] = { route in
+            guard let route = route as? R else { return nil }
+            return transition(route)
+        }
+    }
+
     /// The destination for `route`, or `nil` when its type was never registered.
     func view(for route: any KVRoute) -> AnyView? {
         builders[ObjectIdentifier(type(of: route))]?(route)
+    }
+
+    /// The default transition declared for `route`, or `nil` when its type
+    /// declared none — in which case the host's `defaultTransition` applies.
+    func transition(for route: any KVRoute) -> KVNavigationTransition? {
+        transitions[ObjectIdentifier(type(of: route))]?(route)
     }
 
     /// Runs `configure` exactly once for this registry instance.
@@ -102,6 +149,31 @@ public extension View {
     ///
     /// Apply to ``KVRouterHost`` (or any ancestor of it) — destinations read the
     /// registry from the environment.
+    ///
+    /// - Important: `configure` runs **exactly once** per view identity, not on
+    ///   every render. Anything a destination closure reads from the surrounding
+    ///   scope is captured at that first call and never refreshed, so state
+    ///   captured here goes stale silently:
+    ///
+    ///   ```swift
+    ///   // Wrong: `user` is frozen at the value it held on the first render.
+    ///   .kvRoutes { routes in
+    ///       routes.register(ProfileRoute.self) { _ in ProfileView(user: user) }
+    ///   }
+    ///   ```
+    ///
+    ///   Pass identity and let the destination read the live value itself —
+    ///   from the route's payload, an `@Environment` value, or an observable
+    ///   object the view subscribes to:
+    ///
+    ///   ```swift
+    ///   .kvRoutes { routes in
+    ///       routes.register(ProfileRoute.self) { route in
+    ///           ProfileView(userID: route.userID)   // reads the store itself
+    ///       }
+    ///   }
+    ///   ```
+    ///
     /// - Parameter configure: Called once, to register route types.
     func kvRoutes(
         _ configure: @escaping (KVRouteRegistry) -> Void

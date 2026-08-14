@@ -96,6 +96,30 @@ struct MyApp: App {
 `.kvRoutes` is where routes meet views. A route type with no registration trips
 an assertion in debug builds rather than rendering blank.
 
+> [!IMPORTANT]
+> The `.kvRoutes` closure runs **exactly once** per view identity, not on every
+> render. Anything a destination closure captures from the surrounding scope is
+> frozen at that first call and never refreshed — a captured `@State` value,
+> view model, or login flag goes stale silently, with no warning and no crash.
+>
+> ```swift
+> // Wrong: `user` keeps the value it held on the first render, forever.
+> .kvRoutes { routes in
+>     routes.register(ProfileRoute.self) { _ in ProfileView(user: user) }
+> }
+> ```
+>
+> Pass identity instead and let the destination read the live value itself —
+> from the route's payload, an `@Environment` value, or an observable object:
+>
+> ```swift
+> .kvRoutes { routes in
+>     routes.register(ProfileRoute.self) { route in
+>         ProfileView(userID: route.userID)
+>     }
+> }
+> ```
+
 Use the environment router from any hosted view:
 
 ```swift
@@ -126,14 +150,24 @@ struct HomeView: View {
 
 ## Navigation Transitions
 
-Set a host default or override it for one navigation operation:
+Set a host default, a default for a route type, or override it for one
+navigation operation:
 
 ```swift
 KVRouterHost(router: router, defaultTransition: .sharedAxis()) {
     HomeView()
 }
+.kvRoutes { routes in
+    // Every push of a ShopRoute fades, without repeating `transition:`.
+    routes.register(ShopRoute.self, transition: .fade) { route in
+        switch route {
+        case .productDetail(let id): ProductDetailView(id: id)
+        case .cart:                  CartView()
+        }
+    }
+}
 
-router.push(ShopRoute.profile, transition: .fade)
+router.push(ShopRoute.profile, transition: .depth)   // wins for this push only
 
 router.pushView(transition: .depth) {
     DetailView(id: 42)
@@ -141,6 +175,32 @@ router.pushView(transition: .depth) {
 
 router.replaceTop(with: ShopRoute.settings)
 ```
+
+Three levels, most specific first:
+
+| Level | Declared with | Scope |
+| --- | --- | --- |
+| Call site | `push(_:transition:)` | one navigation |
+| Route type | `routes.register(_:transition:)` | every push of that type |
+| Host | `KVRouterHost(defaultTransition:)` | the whole stack |
+
+When one route type's cases want different motion, register the transition as a
+function of the value. Returning `nil` keeps the host default for that case:
+
+```swift
+.kvRoutes { routes in
+    routes.register(ShopRoute.self) { route in … }
+    routes.registerTransition(ShopRoute.self) { route in
+        switch route {
+        case .productDetail: .zoom(sourceID: "product")
+        case .cart:          nil
+        }
+    }
+}
+```
+
+Route-level defaults apply to pops and back-swipes too, and to entries that never
+went through `push` — a restored path or a deep link picks them up as well.
 
 The transition stored with the top entry is automatically reversed by a
 single-screen `pop()`. Bulk path changes are not animated: SwiftUI does not hand

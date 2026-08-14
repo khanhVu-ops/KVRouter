@@ -146,7 +146,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     ) -> KVResolvedTransition {
         let requested = override ?? defaultTransition
         if case .zoom(let sourceID) = requested.kind,
-           !hasSource(sourceID) {
+           !hasSource(sourceID.anyHashable) {
             return KVResolvedTransition(
                 transition: .scaleAndFade,
                 backend: .custom
@@ -421,8 +421,9 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         for transition: KVNavigationTransition
     ) -> (() -> KVTransitionSourceRegistry.Source?)? {
         guard case .zoom(let sourceID) = transition.kind else { return nil }
+        let id = sourceID.anyHashable
         return { [weak sourceRegistry] in
-            sourceRegistry?.source(for: sourceID)
+            sourceRegistry?.source(for: id)
         }
     }
 

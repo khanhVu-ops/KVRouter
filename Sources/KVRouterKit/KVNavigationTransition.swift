@@ -213,9 +213,15 @@ struct KVCustomTransitionSpec: Sendable, Equatable {
     let interactiveBack: Bool
 }
 
-@MainActor
-public struct KVNavigationTransition {
-    enum Kind {
+/// How a push or pop animates.
+///
+/// A plain `Sendable` value with no actor isolation: it has to survive being
+/// stored in a `Sendable` type — a route's default transition, a screen
+/// descriptor built off the main actor — and none of what it holds is UIKit
+/// state. Turning one into an actual animation is what needs the main actor,
+/// and that lives in `descriptor(operation:reduceMotion:)`.
+public struct KVNavigationTransition: Sendable {
+    enum Kind: Sendable {
         case system
         case slide(Edge)
         case fade
@@ -226,7 +232,7 @@ public struct KVNavigationTransition {
         case reveal(UnitPoint)
         case pageTurn(Edge)
         case flip3D(KVFlip3DAxis)
-        case zoom(AnyHashable)
+        case zoom(KVTransitionSourceID)
         case custom(KVCustomTransitionSpec)
     }
 
@@ -282,8 +288,17 @@ public struct KVNavigationTransition {
         Self(kind: .flip3D(axis), animationOverride: nil)
     }
 
-    public static func zoom<ID: Hashable>(sourceID: ID) -> Self {
-        Self(kind: .zoom(AnyHashable(sourceID)), animationOverride: nil)
+    /// Grows the incoming screen out of the view tagged
+    /// ``SwiftUI/View/kvTransitionSource(id:cornerRadius:)`` with the same id.
+    ///
+    /// - Parameter sourceID: Must be `Sendable` as well as `Hashable`, so the
+    ///   transition holding it stays `Sendable`. Strings, integers, `UUID`s and
+    ///   plain enums already are.
+    public static func zoom<ID: Hashable & Sendable>(sourceID: ID) -> Self {
+        Self(
+            kind: .zoom(KVTransitionSourceID(sourceID)),
+            animationOverride: nil
+        )
     }
 
     public static func custom(

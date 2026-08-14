@@ -103,6 +103,97 @@ struct KVRouteRegistryTests {
     }
 }
 
+/// Compile-time assertion that a transition can live in a `Sendable` type — the
+/// whole point of dropping `@MainActor` from it. If the conformance regresses,
+/// this file stops building.
+private struct TransitionBox: Sendable {
+    let transition: KVNavigationTransition
+}
+
+@Suite("Transition is Sendable")
+struct KVNavigationTransitionSendableTests {
+
+    @Test("A transition crosses isolation without losing its kind")
+    func crossesIsolation() async {
+        let box = TransitionBox(transition: .zoom(sourceID: "card"))
+
+        let kind = await Task.detached { box.transition.debugKind }.value
+
+        #expect(kind == .zoom)
+    }
+
+    /// `.system` and friends are non-isolated globals now, so reading one off the
+    /// main actor must not need an `await`.
+    @Test("Static transitions are reachable off the main actor")
+    func staticsAreNonIsolated() async {
+        let kind = await Task.detached { KVNavigationTransition.depth.debugKind }.value
+
+        #expect(kind == .depth)
+    }
+}
+
+@MainActor
+@Suite("Route-level default transition")
+struct KVRouteTransitionTests {
+
+    @Test("register(_:transition:) declares both view and transition")
+    func registersViewAndTransition() {
+        let registry = KVRouteRegistry()
+        registry.register(ShopTestRoute.self, transition: .fade) { _ in
+            Text("shop")
+        }
+
+        #expect(registry.view(for: ShopTestRoute.cart) != nil)
+        #expect(registry.transition(for: ShopTestRoute.cart)?.debugKind == .fade)
+    }
+
+    @Test("A route type with no declared transition resolves to nil")
+    func undeclaredTransitionIsNil() {
+        let registry = KVRouteRegistry()
+        registry.register(ShopTestRoute.self) { _ in Text("shop") }
+
+        #expect(registry.transition(for: ShopTestRoute.cart) == nil)
+    }
+
+    @Test("Transitions are scoped to one concrete type")
+    func transitionIsScopedToItsType() {
+        let registry = KVRouteRegistry()
+        registry.register(ShopTestRoute.self, transition: .fade) { _ in
+            Text("shop")
+        }
+
+        #expect(registry.transition(for: AuthTestRoute.login) == nil)
+    }
+
+    /// The per-value form is what lets one route type's cases differ, and
+    /// returning `nil` for a case is how it opts back into the host default.
+    @Test("A per-value transition varies by case")
+    func perValueTransitionVariesByCase() {
+        let registry = KVRouteRegistry()
+        registry.registerTransition(ShopTestRoute.self) { route in
+            switch route {
+            case .detail: .depth
+            case .cart: nil
+            }
+        }
+
+        #expect(registry.transition(for: ShopTestRoute.detail(id: 1))?.debugKind == .depth)
+        #expect(registry.transition(for: ShopTestRoute.cart) == nil)
+    }
+
+    /// Registering a transition must not imply a destination, so the two calls
+    /// can be made in either order without one clobbering the other.
+    @Test("Declaring a transition leaves the destination alone")
+    func transitionRegistrationIsIndependent() {
+        let registry = KVRouteRegistry()
+        registry.registerTransition(ShopTestRoute.self) { _ in .fade }
+        registry.register(ShopTestRoute.self) { _ in Text("shop") }
+
+        #expect(registry.view(for: ShopTestRoute.cart) != nil)
+        #expect(registry.transition(for: ShopTestRoute.cart)?.debugKind == .fade)
+    }
+}
+
 @MainActor
 @Suite("Dynamic view route")
 struct KVDynamicViewRouteTests {

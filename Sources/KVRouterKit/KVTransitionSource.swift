@@ -1,6 +1,34 @@
 import SwiftUI
 import UIKit
 
+/// Identifies the view a zoom transition grows from — a `Sendable` stand-in for
+/// `AnyHashable`, which is not.
+///
+/// Same trick as `AnyKVRoute`: keep the existential constrained to
+/// `Hashable & Sendable` and erase to `AnyHashable` only where the id is handed
+/// to the source registry or to SwiftUI's `matchedTransitionSource`. Storing an
+/// `AnyHashable` in ``KVNavigationTransition`` instead would forfeit that type's
+/// `Sendable` conformance, and with it the ability to keep a transition in a
+/// `Sendable` type — which is what a route-level default is.
+struct KVTransitionSourceID: Hashable, Sendable {
+    private let base: any Hashable & Sendable
+
+    init(_ base: some Hashable & Sendable) {
+        self.base = base
+    }
+
+    /// The id as the registry and SwiftUI see it.
+    var anyHashable: AnyHashable { AnyHashable(base) }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.anyHashable == rhs.anyHashable
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(anyHashable)
+    }
+}
+
 @MainActor
 final class KVTransitionSourceRegistry: ObservableObject {
     struct Source {

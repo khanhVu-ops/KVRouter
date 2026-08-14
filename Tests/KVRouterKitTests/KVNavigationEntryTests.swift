@@ -63,6 +63,105 @@ final class KVNavigationEntryTests: XCTestCase {
         XCTAssertEqual(router.transitionOverride(for: router.navigationEntries[1])?.debugKind, .depth)
     }
 
+    // MARK: - Route-level default transitions
+
+    /// The router holds the registry weakly — in an app the view tree owns it —
+    /// so these tests park it here for the lifetime of the test case.
+    private var retainedRegistry: KVRouteRegistry?
+
+    private func routerWithRouteTransition(
+        _ transition: KVNavigationTransition
+    ) -> KVAppRouter {
+        let registry = KVRouteRegistry()
+        registry.registerTransition(TestRoute.self) { _ in transition }
+        retainedRegistry = registry
+        let router = KVAppRouter()
+        router.routeRegistry = registry
+        return router
+    }
+
+    func testPushWithoutTransitionUsesTheRouteDefault() async {
+        let router = routerWithRouteTransition(.fade)
+
+        router.push(TestRoute.screen("detail"))
+        await waitUntil { router.navigationEntries.count == 1 }
+
+        XCTAssertEqual(
+            router.transitionOverride(for: router.navigationEntries[0])?.debugKind,
+            .fade
+        )
+    }
+
+    func testCallSiteTransitionBeatsTheRouteDefault() async {
+        let router = routerWithRouteTransition(.fade)
+
+        router.push(TestRoute.screen("detail"), transition: .depth)
+        await waitUntil { router.navigationEntries.count == 1 }
+
+        XCTAssertEqual(
+            router.transitionOverride(for: router.navigationEntries[0])?.debugKind,
+            .depth
+        )
+    }
+
+    /// A route type that declared nothing must still fall through to the host's
+    /// `defaultTransition`, which `nil` is how the host reads.
+    func testUndeclaredRouteTypeStillResolvesToNil() async {
+        let registry = KVRouteRegistry()
+        registry.registerTransition(OtherTestRoute.self) { _ in .fade }
+        retainedRegistry = registry
+        let router = KVAppRouter()
+        router.routeRegistry = registry
+
+        router.push(TestRoute.screen("detail"))
+        await waitUntil { router.navigationEntries.count == 1 }
+
+        XCTAssertNil(router.transitionOverride(for: router.navigationEntries[0]))
+    }
+
+    /// Entries created by a direct path assignment never went through `push`, so
+    /// their transition can only come from the registry.
+    func testPathAssignmentPicksUpTheRouteDefault() {
+        let router = routerWithRouteTransition(.depth)
+
+        router.path = [.screen("a"), .screen("b")]
+
+        XCTAssertEqual(
+            router.transitionOverride(for: router.navigationEntries[1])?.debugKind,
+            .depth
+        )
+    }
+
+    /// The pop side reads the same funnel, so going back plays the route's own
+    /// transition in reverse rather than the host default.
+    func testPopCarriesTheRouteDefault() async {
+        let router = routerWithRouteTransition(.flip3D())
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
+        router.push(TestRoute.screen("detail"))
+        await waitUntil { router.path.count == 1 }
+        router.pop()
+        await waitUntil { router.path.isEmpty }
+
+        XCTAssertEqual(driver.requests.map(\.operation), [.push, .pop])
+        XCTAssertEqual(driver.requests.last?.transitionOverride?.debugKind, .flip3D)
+    }
+
+    /// Nothing keeps the registry alive but the view tree; a torn-down host must
+    /// not leave the router reading a dead one.
+    func testRouterHoldsTheRegistryWeakly() {
+        let router = KVAppRouter()
+        do {
+            let registry = KVRouteRegistry()
+            registry.registerTransition(TestRoute.self) { _ in .fade }
+            router.routeRegistry = registry
+            XCTAssertNotNil(router.routeRegistry)
+        }
+
+        XCTAssertNil(router.routeRegistry)
+    }
+
     func testDirectPathAssignmentReusesCommonPrefix() {
         let router = KVAppRouter()
         router.path = [.screen("a"), .screen("b")]

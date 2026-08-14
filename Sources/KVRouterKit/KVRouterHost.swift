@@ -9,6 +9,7 @@ public struct KVRouterHost<Root: View>: View {
     @Namespace private var transitionNamespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.kvRouteRegistry) private var routeRegistry
 
     private let root: Root
     private let ignoreKeyboard: Bool
@@ -68,6 +69,13 @@ public struct KVRouterHost<Root: View>: View {
                 // back. Only settle what is mid-flight; `attach(to:)` is
                 // idempotent, so reappearing needs no repair.
                 coordinator.completePendingTransition(cancelled: true)
+            }
+            // Keyed on the registry's identity rather than folded into the task
+            // above: `.kvRoutes` may sit anywhere above the host, so the value
+            // can arrive — or be swapped for a new one — after the router is
+            // already wired.
+            .task(id: routeRegistry.map(ObjectIdentifier.init)) {
+                router.routeRegistry = routeRegistry
             }
             .task(id: reduceMotion) {
                 coordinator.reduceMotion = reduceMotion
@@ -154,7 +162,7 @@ private struct KVRouterDestinationContent: View {
            case .zoom(let sourceID) = transition.kind {
             destination
                 .navigationTransition(
-                    .zoom(sourceID: sourceID, in: namespace)
+                    .zoom(sourceID: sourceID.anyHashable, in: namespace)
                 )
         } else {
             destination
