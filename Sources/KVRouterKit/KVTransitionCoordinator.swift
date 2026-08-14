@@ -64,7 +64,22 @@ final class KVTransitionTransaction {
 @MainActor
 final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     let defaultTransition: KVNavigationTransition
-    private(set) var pendingTransaction: KVTransitionTransaction?
+    /// Whether the router is driving a transition right now, which is also the
+    /// answer the delegate proxy gives to `responds(to:)` — so a change here has
+    /// to be pushed to UIKit, which caches that answer. See
+    /// ``KVNavigationControllerBridge/refreshDelegateCapabilities()``.
+    private(set) var pendingTransaction: KVTransitionTransaction? {
+        didSet {
+            guard (oldValue == nil) != (pendingTransaction == nil) else { return }
+            // Never while a gesture is driving: re-assigning the delegate tears
+            // down UIKit's in-flight interactive transition, and the back swipe
+            // dies half way. An interactive pop does not need the refresh anyway
+            // — it only ever starts on a screen whose metadata already says
+            // custom, so the claim was made true when that screen was shown.
+            guard pendingTransaction?.isInteractive != true else { return }
+            bridge?.refreshDelegateCapabilities()
+        }
+    }
     var isBridgeAttached = false
     var reduceMotion = false
     /// Host-level opt-out for back-swipe, covering both engines.
@@ -290,6 +305,24 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         return animator
     }
 
+    /// Whether the router has an animator to contribute right now, for a
+    /// navigation starting from `controller`.
+    ///
+    /// Mirrors the conditions in ``animator(for:from:to:)`` deliberately: it is
+    /// what the delegate proxy answers `responds(to:)` with, and claiming a
+    /// transition the router cannot supply is what kills the system back swipe.
+    /// See the note on ``KVNavigationControllerDelegateProxy/responds(to:)``.
+    func contributesTransition(from controller: UIViewController?) -> Bool {
+        guard !isSilentEditing else { return false }
+        if pendingTransaction != nil { return true }
+        guard let controller,
+              let metadata = controllerMetadata[ObjectIdentifier(controller)],
+              metadata.controller === controller else {
+            return false
+        }
+        return metadata.resolved.backend == .custom
+    }
+
     func animator(
         for operation: UINavigationController.Operation,
         from fromViewController: UIViewController,
@@ -394,6 +427,11 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
                     )
                 )
         }
+
+        // The metadata just decided whether the top screen pops with a custom
+        // transition, which is the other half of what the proxy claims — so
+        // UIKit's cached answer is now stale.
+        bridge?.refreshDelegateCapabilities()
     }
 
     private func makeAnimator(

@@ -43,6 +43,111 @@ final class KVNavigationControllerBridgeTests: XCTestCase {
         XCTAssertEqual(original.didShowCount, 1)
     }
 
+    // MARK: - responds(to:) gating, i.e. the system back swipe
+
+    private var animationControllerSelector: Selector {
+        #selector(
+            (any UINavigationControllerDelegate)
+                .navigationController(_:animationControllerFor:from:to:)
+        )
+    }
+
+    private var interactionControllerSelector: Selector {
+        #selector(
+            (any UINavigationControllerDelegate)
+                .navigationController(_:interactionControllerFor:)
+        )
+    }
+
+    /// UIKit suppresses `interactivePopGestureRecognizer` when the navigation
+    /// controller's delegate merely *responds to* `animationControllerFor`,
+    /// whatever that method returns. Claiming it unconditionally is what killed
+    /// the back swipe on `.system` — and only on `.system`, since a custom
+    /// transition really does supply an animator. Returning `nil` is not a fix:
+    /// UIKit never asks.
+    func testProxyDoesNotClaimTransitionSelectorsWithNothingToContribute() {
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        let navigationController = UINavigationController()
+        // Implements neither transition selector.
+        let original = RecordingNavigationDelegate()
+        navigationController.delegate = original
+        coordinator.attach(to: navigationController)
+        let proxy = try? XCTUnwrap(navigationController.delegate)
+
+        XCTAssertEqual(proxy?.responds(to: animationControllerSelector), false)
+        XCTAssertEqual(proxy?.responds(to: interactionControllerSelector), false)
+
+        // Everything else it wraps is still claimed, so forwarding is unaffected.
+        XCTAssertEqual(
+            proxy?.responds(
+                to: #selector(
+                    (any UINavigationControllerDelegate)
+                        .navigationController(_:didShow:animated:)
+                )
+            ),
+            true
+        )
+    }
+
+    /// The gate must not shadow a host delegate that does implement them —
+    /// SwiftUI's `NavigationStackCoordinator` is exactly such a delegate.
+    func testProxyStillClaimsTransitionSelectorsWhenTheBaseDelegateDoes() {
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        let navigationController = UINavigationController()
+        let original = TransitioningNavigationDelegate()
+        navigationController.delegate = original
+        coordinator.attach(to: navigationController)
+        let proxy = try? XCTUnwrap(navigationController.delegate)
+
+        XCTAssertEqual(proxy?.responds(to: animationControllerSelector), true)
+        XCTAssertEqual(proxy?.responds(to: interactionControllerSelector), true)
+    }
+
+    /// The other half: while the router is driving a custom transition it must
+    /// claim them, or its own animator never gets asked for.
+    func testProxyClaimsTransitionSelectorsWhileDrivingACustomTransition() async {
+        let coordinator = KVTransitionCoordinator(defaultTransition: .depth)
+        let navigationController = UINavigationController()
+        let original = RecordingNavigationDelegate()
+        navigationController.delegate = original
+        coordinator.attach(to: navigationController)
+
+        let task = Task { @MainActor in
+            await coordinator.perform(
+                KVTransitionRequest(
+                    operation: .push,
+                    from: nil,
+                    to: KVNavigationEntry(route: TestRoute.screen("detail")),
+                    transitionOverride: .depth
+                )
+            ) {}
+        }
+        await waitUntil { coordinator.pendingTransaction != nil }
+
+        XCTAssertEqual(
+            navigationController.delegate?.responds(to: animationControllerSelector),
+            true
+        )
+
+        coordinator.completePendingTransition(cancelled: false)
+        await task.value
+
+        // And it stops claiming them once there is nothing in flight.
+        XCTAssertEqual(
+            navigationController.delegate?.responds(to: animationControllerSelector),
+            false
+        )
+    }
+
+    func testContributesTransitionIsFalseForAnUnknownController() {
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        let navigationController = UINavigationController()
+        coordinator.attach(to: navigationController)
+
+        XCTAssertFalse(coordinator.contributesTransition(from: nil))
+        XCTAssertFalse(coordinator.contributesTransition(from: UIViewController()))
+    }
+
     func testProxyReturnsAnimatorOnlyForMatchingPendingOperation() async {
         let coordinator = KVTransitionCoordinator(defaultTransition: .depth)
         let navigationController = UINavigationController()
@@ -910,6 +1015,28 @@ private final class RecordingNavigationAnimationPolicy:
 }
 
 @MainActor
+/// Stands in for SwiftUI's `NavigationStackCoordinator`: a host delegate that does
+/// implement the transition selectors, so the proxy must keep claiming them.
+private final class TransitioningNavigationDelegate: NSObject,
+    UINavigationControllerDelegate {
+
+    func navigationController(
+        _ navigationController: UINavigationController,
+        animationControllerFor operation: UINavigationController.Operation,
+        from fromVC: UIViewController,
+        to toVC: UIViewController
+    ) -> (any UIViewControllerAnimatedTransitioning)? {
+        nil
+    }
+
+    func navigationController(
+        _ navigationController: UINavigationController,
+        interactionControllerFor animationController: any UIViewControllerAnimatedTransitioning
+    ) -> (any UIViewControllerInteractiveTransitioning)? {
+        nil
+    }
+}
+
 private final class RecordingNavigationDelegate: NSObject,
     UINavigationControllerDelegate {
     private(set) var didShowCount = 0

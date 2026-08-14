@@ -2,6 +2,41 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- The leading-edge back swipe works on `.system`, the default transition — so on
+  any app that never picked a custom one. 3.3.0 claimed this fix and did not
+  deliver it; the entry below is wrong, and the swipe was still dead in 3.3.0 and
+  3.4.0. The recognizer was enabled and idle the whole time, which is why
+  enabling it harder never helped.
+
+  UIKit suppresses `interactivePopGestureRecognizer` when the navigation
+  controller's delegate merely **responds to**
+  `navigationController(_:animationControllerFor:from:to:)` — whatever that method
+  returns. `KVNavigationControllerDelegateProxy` answered `responds(to:)` `true`
+  unconditionally, so on `.system`, where the router contributes nothing and
+  UIKit's own transition should run, UIKit believed someone else owned the
+  transition and declined to start the gesture. Returning `nil` from the method is
+  not a fix: UIKit never gets that far, and `interactionControllerFor` is never
+  called at all.
+
+  The proxy now claims those two selectors only when the router really has an
+  animator for the navigation about to happen, decided per screen from the top
+  view controller's recorded transition — so a stack mixing custom and `.system`
+  screens gets the right answer on each. `UINavigationController` snapshots those
+  answers when the delegate is assigned, so the bridge re-assigns it when the
+  answer changes, and never while a gesture is mid-flight, which tears down the
+  in-flight interactive transition.
+
+  Verified by hand on iOS 26.2: `.system` screens pop by swipe, and custom
+  transition screens still pop with their own animation. Worth knowing for
+  anything in this area — the package's own `UIScreenEdgePanGestureRecognizer`,
+  which drives the pop on custom screens, cannot be driven by synthetic touch
+  injection at all, so automation cannot tell a real regression there from its own
+  blind spot. Only a finger can.
+
 ## 3.4.0 - 2026-08-14
 
 ### Added
@@ -46,6 +81,11 @@ All notable changes to KVRouterKit are documented in this file.
 
 ### Fixed
 
+- **This did not actually fix the back swipe** — see Unreleased above. The latched
+  `isEnabled` described here was a real bug and is really fixed, but it was not
+  what kept the gesture from starting, so the swipe stayed dead on `.system`
+  through 3.3.0 and 3.4.0. Left as written, with this correction, rather than
+  rewritten.
 - The leading-edge back swipe works again on `.system`, the default transition —
   so on any app that never picked a custom one. `attach(to:)` snapshotted
   `interactivePopGestureRecognizer.isEnabled` and then used that snapshot to gate
