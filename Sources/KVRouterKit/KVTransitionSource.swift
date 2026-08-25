@@ -29,6 +29,19 @@ struct KVTransitionSourceID: Hashable, Sendable {
     }
 }
 
+/// The identity SwiftUI sees for a native zoom source.
+///
+/// `matchedTransitionSource` can retain its private hidden state after a zoom
+/// dismissal has finished. Keeping the caller's logical id stable would let
+/// that stale state attach to the source again. The generation changes only
+/// after UIKit reports the pop complete, so the destination and source still
+/// share one identity for the entire transition while the returned source gets
+/// a fresh identity before it can be hidden again.
+struct KVNativeTransitionSourceID: Hashable {
+    let logicalID: AnyHashable
+    let generation: UInt64
+}
+
 @MainActor
 final class KVTransitionSourceRegistry: ObservableObject {
     struct Source {
@@ -61,6 +74,12 @@ final class KVTransitionSourceRegistry: ObservableObject {
     }
 
     private var sources: [AnyHashable: Source] = [:]
+    private var nativeSourceGenerations: [AnyHashable: UInt64] = [:]
+
+    /// Changes only when a completed native zoom pop rotates a source identity.
+    /// Geometry probes deliberately do not publish, or scrolling a grid would
+    /// invalidate every matched transition source on every layout pass.
+    @Published private(set) var nativeSourceRevision: UInt64 = 0
 
     func update(
         id: AnyHashable,
@@ -90,6 +109,22 @@ final class KVTransitionSourceRegistry: ObservableObject {
             return nil
         }
         return source
+    }
+
+    func nativeSourceID(for id: AnyHashable) -> AnyHashable {
+        AnyHashable(
+            KVNativeTransitionSourceID(
+                logicalID: id,
+                generation: nativeSourceGenerations[id, default: 0]
+            )
+        )
+    }
+
+    /// Gives the returned source a fresh native identity after its zoom pop.
+    /// The logical id exposed by `kvTransitionSource(id:)` remains unchanged.
+    func resetNativeSource(id: AnyHashable) {
+        nativeSourceGenerations[id, default: 0] &+= 1
+        nativeSourceRevision &+= 1
     }
 
     static func isValid(frame: CGRect) -> Bool {
@@ -186,14 +221,40 @@ private struct KVTransitionSourceModifier: ViewModifier {
                 registry?.remove(id: id)
             }
 
-        if #available(iOS 18.0, *), let namespace {
-            // The system needs the shape too, for the same reason.
-            observedContent.matchedTransitionSource(id: id, in: namespace) {
-                $0.clipShape(.rect(cornerRadius: cornerRadius))
-            }
+        if #available(iOS 18.0, *),
+           let namespace,
+           let registry {
+            KVNativeTransitionSource(
+                content: observedContent,
+                id: id,
+                cornerRadius: cornerRadius,
+                namespace: namespace,
+                registry: registry
+            )
         } else {
             observedContent
         }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct KVNativeTransitionSource<Content: View>: View {
+    let content: Content
+    let id: AnyHashable
+    let cornerRadius: CGFloat
+    let namespace: Namespace.ID
+    @ObservedObject var registry: KVTransitionSourceRegistry
+
+    var body: some View {
+        let nativeID = registry.nativeSourceID(for: id)
+        // The system needs the shape too, for the same reason as the custom
+        // transition registry. `.id(nativeID)` also replaces the exact SwiftUI
+        // subtree on which matchedTransitionSource stored its hidden state.
+        content
+            .matchedTransitionSource(id: nativeID, in: namespace) {
+                $0.clipShape(.rect(cornerRadius: cornerRadius))
+            }
+            .id(nativeID)
     }
 }
 

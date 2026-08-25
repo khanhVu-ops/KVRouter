@@ -178,11 +178,11 @@ private struct KVRouterDestinationContent: View {
     @ViewBuilder
     var body: some View {
         if #available(iOS 18.0, *),
-           coordinator.usesNativeZoom(for: entry),
-           case .zoom(let sourceID) = transition.kind {
+           let nativeSourceID = coordinator.nativeZoomSourceID(for: entry),
+           case .zoom = transition.kind {
             destination
                 .navigationTransition(
-                    .zoom(sourceID: sourceID.anyHashable, in: namespace)
+                    .zoom(sourceID: nativeSourceID, in: namespace)
                 )
         } else {
             destination

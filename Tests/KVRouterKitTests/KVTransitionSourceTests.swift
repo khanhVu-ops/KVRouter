@@ -36,6 +36,20 @@ struct KVTransitionSourceTests {
         #expect(registry.source(for: "card")?.cornerRadius == 8)
     }
 
+    @Test("Native identity rotates only when a zoom pop completes")
+    func nativeIdentityRotatesAfterPop() {
+        let registry = KVTransitionSourceRegistry()
+        let first = registry.nativeSourceID(for: "card")
+
+        #expect(registry.nativeSourceID(for: "card") == first)
+
+        registry.resetNativeSource(id: "card")
+        let second = registry.nativeSourceID(for: "card")
+
+        #expect(second != first)
+        #expect(registry.nativeSourceID(for: "card") == second)
+    }
+
     /// The hero animation scales the destination down onto the source, so the
     /// radius has to be divided by that scale or it shrinks with the view and
     /// reads as a squarer corner than the source has.

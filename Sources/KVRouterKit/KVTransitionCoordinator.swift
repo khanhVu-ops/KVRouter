@@ -32,6 +32,11 @@ private struct KVControllerTransitionMetadata {
     let resolved: KVResolvedTransition
 }
 
+private struct KVNativeZoomEntryMetadata {
+    let logicalSourceID: AnyHashable
+    let nativeSourceID: AnyHashable
+}
+
 private struct KVNavigationAnimationIntent {
     let id = UUID()
     let request: KVTransitionRequest
@@ -105,7 +110,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     }
 
     private var bridge: KVNavigationControllerBridge?
-    private var nativeZoomEntryIDs: Set<UUID> = []
+    private var nativeZoomEntries: [UUID: KVNativeZoomEntryMetadata] = [:]
     private var navigationAnimationIntent: KVNavigationAnimationIntent?
     private var navigationAnimationIntentExpiry: Task<Void, Never>?
 
@@ -190,7 +195,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             return KVResolvedTransition(
                 transition: transition,
                 backend: supportsNativeZoom
-                    && nativeZoomEntryIDs.contains(from.id)
+                    && nativeZoomEntries[from.id] != nil
                     ? .nativeZoom
                     : .custom
             )
@@ -203,7 +208,11 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     }
 
     func usesNativeZoom(for entry: KVNavigationEntry) -> Bool {
-        nativeZoomEntryIDs.contains(entry.id)
+        nativeZoomEntries[entry.id] != nil
+    }
+
+    func nativeZoomSourceID(for entry: KVNavigationEntry) -> AnyHashable? {
+        nativeZoomEntries[entry.id]?.nativeSourceID
     }
 
     func perform(
@@ -236,8 +245,16 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             // invisible after the dismiss while still holding its slot in the
             // layout — a hole in the grid.
             if request.operation == .push {
-                if let destination = request.to {
-                    nativeZoomEntryIDs.insert(destination.id)
+                if let destination = request.to,
+                   case .zoom(let sourceID) = resolved.transition.kind {
+                    let logicalSourceID = sourceID.anyHashable
+                    nativeZoomEntries[destination.id] =
+                        KVNativeZoomEntryMetadata(
+                            logicalSourceID: logicalSourceID,
+                            nativeSourceID: sourceRegistry?.nativeSourceID(
+                                for: logicalSourceID
+                            ) ?? logicalSourceID
+                        )
                 }
                 prepareNavigationAnimationIntent(for: request)
             }
@@ -490,7 +507,16 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
 
     private func pruneEntryMetadata() {
         guard let router else { return }
-        nativeZoomEntryIDs.formIntersection(Set(router.navigationEntries.map(\.id)))
+        let liveEntryIDs = Set(router.navigationEntries.map(\.id))
+        let removedEntries = nativeZoomEntries.filter {
+            !liveEntryIDs.contains($0.key)
+        }
+        nativeZoomEntries = nativeZoomEntries.filter {
+            liveEntryIDs.contains($0.key)
+        }
+        for metadata in removedEntries.values {
+            sourceRegistry?.resetNativeSource(id: metadata.logicalSourceID)
+        }
     }
 
     func completePendingTransition(cancelled: Bool) {
@@ -501,11 +527,12 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     /// Whether `entry` was pushed with the system zoom, kept until its
     /// transition finishes — see ``navigationControllerDidShow(_:)``.
     ///
-    /// Without an attached bridge nothing prunes this, so the set grows by one
-    /// UUID per zoom push for the life of the process. That is the cheaper side
-    /// of the trade: pruning it on a path change is what broke swipe-to-dismiss.
+    /// Without an attached bridge nothing prunes this metadata, so it grows by
+    /// one entry per zoom push for the life of the process. That is the cheaper
+    /// side of the trade: pruning it on a path change is what broke
+    /// swipe-to-dismiss.
     func retainedNativeZoomEntryCount() -> Int {
-        nativeZoomEntryIDs.count
+        nativeZoomEntries.count
     }
 
     func canBeginInteractivePop() -> Bool {

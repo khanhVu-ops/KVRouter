@@ -98,6 +98,10 @@ final class KVTransitionCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(coordinator.usesNativeZoom(for: entry))
         XCTAssertEqual(
+            coordinator.nativeZoomSourceID(for: entry),
+            AnyHashable("card")
+        )
+        XCTAssertEqual(
             coordinator.resolve(pop, supportsNativeZoom: true).backend,
             .nativeZoom
         )
@@ -330,6 +334,61 @@ final class KVTransitionCoordinatorTests: XCTestCase {
 
         XCTAssertFalse(coordinator.usesNativeZoom(for: entry))
         XCTAssertEqual(coordinator.retainedNativeZoomEntryCount(), 0)
+    }
+
+    /// A native zoom can leave `matchedTransitionSource` holding SwiftUI's
+    /// private hidden flag after the pop. The destination must keep the source
+    /// identity it started with until UIKit finishes, then the returned source
+    /// gets a new identity so that stale flag cannot attach to it.
+    func testCompletedNativeZoomPopRotatesTheSourceIdentity() async throws {
+        guard #available(iOS 18.0, *) else {
+            throw XCTSkip("Native navigation zoom requires iOS 18 or newer")
+        }
+        let router = KVAppRouter()
+        let registry = KVTransitionSourceRegistry()
+        registry.update(
+            id: "card",
+            frame: CGRect(x: 0, y: 0, width: 120, height: 90),
+            view: nil
+        )
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        coordinator.sourceRegistry = registry
+        let navigationController = UINavigationController(
+            rootViewController: UIViewController()
+        )
+        let originalSourceID = registry.nativeSourceID(for: "card")
+        let entry = KVNavigationEntry(route: TestRoute.screen("detail"))
+
+        await coordinator.perform(
+            KVTransitionRequest(
+                operation: .push,
+                from: nil,
+                to: entry,
+                transitionOverride: .zoom(sourceID: "card")
+            )
+        ) { router.navigationEntries = [entry] }
+
+        XCTAssertEqual(
+            coordinator.nativeZoomSourceID(for: entry),
+            originalSourceID
+        )
+
+        // Committing the path change must not rotate the identity while the
+        // destination is still animating toward it.
+        router.navigationEntries = []
+        XCTAssertEqual(
+            registry.nativeSourceID(for: "card"),
+            originalSourceID
+        )
+
+        coordinator.navigationControllerDidShow(navigationController)
+
+        XCTAssertNil(coordinator.nativeZoomSourceID(for: entry))
+        XCTAssertNotEqual(
+            registry.nativeSourceID(for: "card"),
+            originalSourceID
+        )
     }
 
     // MARK: - Animation forcing

@@ -2,6 +2,18 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.5.1 - 2026-08-25
+
+### Fixed
+
+- A native iOS 18+ zoom dismissal can leave `matchedTransitionSource` carrying
+  SwiftUI's private hidden state after the animation is over. The source keeps
+  its layout slot and remains tappable, but renders nothing. KVRouterKit now
+  gives each native zoom a package-owned identity and rotates that identity only
+  after UIKit reports the pop complete. The destination therefore keeps its
+  original match for the whole dismissal, while stale hidden state cannot attach
+  to the returned source or the next zoom from that item.
+
 ## 3.5.0 - 2026-08-14
 
 ### Added
@@ -111,7 +123,7 @@ All notable changes to KVRouterKit are documented in this file.
 
 ### Fixed
 
-- **This did not actually fix the back swipe** — see Unreleased above. The latched
+- **This did not actually fix the back swipe** — see 3.5.0 above. The latched
   `isEnabled` described here was a real bug and is really fixed, but it was not
   what kept the gesture from starting, so the swipe stayed dead on `.system`
   through 3.3.0 and 3.4.0. Left as written, with this correction, rather than
