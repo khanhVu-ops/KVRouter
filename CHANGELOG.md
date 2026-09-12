@@ -2,6 +2,23 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.5.2 - 2026-09-12
+
+### Fixed
+
+- A zoom could silently become a fade after two sources traded logical IDs.
+  `kvTransitionSource(id:)` removed its registry entry by ID alone when its
+  subtree went away, and a logical ID is the caller's, not a view's — callers
+  legitimately move one from view to view, which is how a paged viewer hands its
+  zoom identity to whichever thumbnail is now on screen. SwiftUI installs the new
+  subtrees first and runs the old ones' `onDisappear` afterwards, so the teardown
+  deleted the entry its successor had just written. With no source registered,
+  `resolve` treats the ID as off screen and substitutes `.scaleAndFade` — no
+  error, no log, just a zoom that stopped being a zoom. Each source now claims
+  its entry and can only clear what it still owns. A source that has not been
+  laid out yet is held to the same rule, so its zero-sized measurement can no
+  longer wipe another source's geometry.
+
 ## 3.5.1 - 2026-08-25
 
 ### Fixed

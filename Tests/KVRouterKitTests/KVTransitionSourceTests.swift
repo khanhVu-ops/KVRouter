@@ -50,6 +50,57 @@ struct KVTransitionSourceTests {
         #expect(registry.nativeSourceID(for: "card") == second)
     }
 
+    /// Two sources trading ids is a supported move — a paged viewer hands its zoom identity to
+    /// whichever thumbnail is now on screen — and SwiftUI runs the old subtrees' `onDisappear`
+    /// *after* the new ones have registered. Removing by id alone therefore deleted the entry the
+    /// other source had just written, and the next zoom silently became a fade.
+    @Test("A source cannot remove an id another source now owns")
+    func teardownCannotRemoveAnotherOwnersEntry() {
+        let registry = KVTransitionSourceRegistry()
+        let first = KVTransitionSourceOwner()
+        let second = KVTransitionSourceOwner()
+        let frame = CGRect(x: 0, y: 0, width: 120, height: 90)
+
+        // `second` adopts the id `first` used to hold, then `first` tears its old subtree down.
+        registry.update(id: "photo", frame: frame, view: nil, cornerRadius: 4, owner: second)
+        registry.remove(id: "photo", owner: first)
+
+        #expect(registry.source(for: "photo")?.cornerRadius == 4)
+    }
+
+    @Test("A source still removes the entry it owns")
+    func teardownRemovesItsOwnEntry() {
+        let registry = KVTransitionSourceRegistry()
+        let owner = KVTransitionSourceOwner()
+        let frame = CGRect(x: 0, y: 0, width: 120, height: 90)
+
+        registry.update(id: "photo", frame: frame, view: nil, cornerRadius: 4, owner: owner)
+        registry.remove(id: "photo", owner: owner)
+
+        #expect(registry.source(for: "photo") == nil)
+    }
+
+    /// A cell that has not been laid out yet measures zero. Without the ownership check that
+    /// measurement cleared whatever the id currently pointed at, which during a trade is the
+    /// other cell's perfectly good geometry.
+    @Test("An unmeasured source cannot clear another owner's geometry")
+    func invalidFrameCannotClearAnotherOwnersEntry() {
+        let registry = KVTransitionSourceRegistry()
+        let measured = KVTransitionSourceOwner()
+        let unmeasured = KVTransitionSourceOwner()
+
+        registry.update(
+            id: "photo",
+            frame: CGRect(x: 0, y: 0, width: 120, height: 90),
+            view: nil,
+            cornerRadius: 4,
+            owner: measured
+        )
+        registry.update(id: "photo", frame: .zero, view: nil, cornerRadius: 4, owner: unmeasured)
+
+        #expect(registry.source(for: "photo")?.cornerRadius == 4)
+    }
+
     /// The hero animation scales the destination down onto the source, so the
     /// radius has to be divided by that scale or it shrinks with the view and
     /// reads as a squarer corner than the source has.

@@ -42,12 +42,28 @@ struct KVNativeTransitionSourceID: Hashable {
     let generation: UInt64
 }
 
+/// Identifies which `kvTransitionSource` wrote a registry entry.
+///
+/// A logical id is the caller's, not a view's, and callers legitimately move one from view to
+/// view: a paged viewer hands its zoom identity to whichever thumbnail is now on screen, so two
+/// cells trade ids in a single update. SwiftUI installs the new subtrees and only then runs the
+/// old ones' `onDisappear`, so a teardown that removed by id alone deleted the entry its
+/// successor had just written. Nothing reported that — ``KVTransitionCoordinator/resolve``
+/// treats a missing source as "this view is not on screen" and quietly substitutes a fade.
+///
+/// A class, so identity is the whole value; `@StateObject` keeps one per view for as long as that
+/// view exists, which is exactly the lifetime an entry should have.
+@MainActor
+final class KVTransitionSourceOwner: ObservableObject {}
+
 @MainActor
 final class KVTransitionSourceRegistry: ObservableObject {
     struct Source {
         let frame: CGRect
         let viewBox: KVWeakViewBox?
         let cornerRadius: CGFloat
+        /// `nil` for a caller that does not claim ownership; such an entry may be removed by id.
+        let owner: ObjectIdentifier?
 
         @MainActor
         func resolved(in container: UIView) -> KVHeroTransitionGeometry? {
@@ -85,20 +101,38 @@ final class KVTransitionSourceRegistry: ObservableObject {
         id: AnyHashable,
         frame: CGRect,
         view: UIView?,
-        cornerRadius: CGFloat? = nil
+        cornerRadius: CGFloat? = nil,
+        owner: KVTransitionSourceOwner? = nil
     ) {
         guard Self.isValid(frame: frame) else {
-            sources[id] = nil
+            // An invalid frame is this owner's own measurement failing, so it clears only what it
+            // owns. Clearing by id would let a laid-out cell be erased by a zero-sized one that
+            // happens to be measuring the id this cell now holds.
+            removeIfOwned(id: id, by: owner)
             return
         }
         sources[id] = Source(
             frame: frame,
             viewBox: view.map(KVWeakViewBox.init),
-            cornerRadius: cornerRadius ?? view?.layer.cornerRadius ?? 0
+            cornerRadius: cornerRadius ?? view?.layer.cornerRadius ?? 0,
+            owner: owner.map(ObjectIdentifier.init)
         )
     }
 
-    func remove(id: AnyHashable) {
+    /// Removes an entry only if `owner` still holds it — see ``KVTransitionSourceOwner``.
+    /// A `nil` owner removes unconditionally, which is what a caller with no claim means.
+    func remove(id: AnyHashable, owner: KVTransitionSourceOwner? = nil) {
+        removeIfOwned(id: id, by: owner)
+    }
+
+    private func removeIfOwned(id: AnyHashable, by owner: KVTransitionSourceOwner?) {
+        guard let owner else {
+            sources[id] = nil
+            return
+        }
+        guard let existing = sources[id] else { return }
+        // An entry with no recorded owner predates any claim, so whoever is speaking may clear it.
+        guard existing.owner == nil || existing.owner == ObjectIdentifier(owner) else { return }
         sources[id] = nil
     }
 
@@ -196,6 +230,11 @@ private struct KVTransitionSourceModifier: ViewModifier {
 
     @Environment(\.kvTransitionNamespace) private var namespace
     @Environment(\.kvTransitionSourceRegistry) private var registry
+    /// One per view, for as long as the view exists — see ``KVTransitionSourceOwner``. It lives
+    /// out here rather than inside the `.id(nativeID)` subtree on purpose: that subtree is
+    /// deliberately replaced whenever the id changes, and an owner replaced along with it would
+    /// identify nothing.
+    @StateObject private var owner = KVTransitionSourceOwner()
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -213,12 +252,13 @@ private struct KVTransitionSourceModifier: ViewModifier {
                         // corners over a rounded source.
                         cornerRadius: cornerRadius > 0
                             ? cornerRadius
-                            : view.layer.cornerRadius
+                            : view.layer.cornerRadius,
+                        owner: owner
                     )
                 }
             }
             .onDisappear {
-                registry?.remove(id: id)
+                registry?.remove(id: id, owner: owner)
             }
 
         if #available(iOS 18.0, *),
