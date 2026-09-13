@@ -101,6 +101,44 @@ struct KVTransitionSourceTests {
         #expect(registry.source(for: "photo")?.cornerRadius == 4)
     }
 
+    /// A source answers to one logical ID at a time. When a caller moves an ID, the entry the
+    /// source used to hold has to go with it — otherwise the old ID still resolves to a view that
+    /// has started answering to another, and the zoom grows from the wrong cell.
+    @Test("Registering a new id releases the one that source used to hold")
+    func registeringReleasesThePreviousID() {
+        let registry = KVTransitionSourceRegistry()
+        let owner = KVTransitionSourceOwner()
+        let frame = CGRect(x: 0, y: 0, width: 120, height: 90)
+
+        registry.update(id: "before", frame: frame, view: nil, cornerRadius: 4, owner: owner)
+        registry.update(id: "after", frame: frame, view: nil, cornerRadius: 4, owner: owner)
+
+        #expect(registry.source(for: "before") == nil)
+        #expect(registry.source(for: "after")?.cornerRadius == 4)
+    }
+
+    /// The release must not reach into an entry the other source has already claimed, which is
+    /// exactly what happens when two cells trade IDs in one update.
+    @Test("Two sources trading ids end up holding one entry each")
+    func tradingIDsLeavesBothRegistered() {
+        let registry = KVTransitionSourceRegistry()
+        let first = KVTransitionSourceOwner()
+        let second = KVTransitionSourceOwner()
+        let frame = CGRect(x: 0, y: 0, width: 120, height: 90)
+
+        registry.update(id: "photo", frame: frame, view: nil, cornerRadius: 4, owner: first)
+        registry.update(id: "copy", frame: frame, view: nil, cornerRadius: 6, owner: second)
+
+        // The trade: each adopts the other's ID, then each tears its old subtree down.
+        registry.update(id: "copy", frame: frame, view: nil, cornerRadius: 4, owner: first)
+        registry.update(id: "photo", frame: frame, view: nil, cornerRadius: 6, owner: second)
+        registry.remove(id: "photo", owner: first)
+        registry.remove(id: "copy", owner: second)
+
+        #expect(registry.source(for: "photo")?.cornerRadius == 6)
+        #expect(registry.source(for: "copy")?.cornerRadius == 4)
+    }
+
     /// The hero animation scales the destination down onto the source, so the
     /// radius has to be divided by that scale or it shrinks with the view and
     /// reads as a squarer corner than the source has.

@@ -2,6 +2,17 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.5.3 - 2026-09-13
+
+### Fixed
+
+- A transition source could leave its old logical ID registered after the caller
+  moved that ID to another source. The stale entry still resolved — to a view
+  that had started answering to a different ID — so a zoom grew from the wrong
+  item. A source now holds exactly one logical ID at a time and releases the
+  previous one as it registers, without disturbing an entry another source has
+  already claimed. Tightens the ownership rule added in 3.5.2.
+
 ## 3.5.2 - 2026-09-12
 
 ### Fixed

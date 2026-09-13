@@ -90,6 +90,11 @@ final class KVTransitionSourceRegistry: ObservableObject {
     }
 
     private var sources: [AnyHashable: Source] = [:]
+    /// The one ID each owner currently holds. A source registers under exactly one logical ID at
+    /// a time, so when a caller moves an ID the entry the owner used to hold goes with it —
+    /// otherwise the old ID keeps pointing at a view that has since started answering to another,
+    /// and the zoom grows from the wrong cell.
+    private var ownedIDs: [ObjectIdentifier: AnyHashable] = [:]
     private var nativeSourceGenerations: [AnyHashable: UInt64] = [:]
 
     /// Changes only when a completed native zoom pop rotates a source identity.
@@ -111,6 +116,13 @@ final class KVTransitionSourceRegistry: ObservableObject {
             removeIfOwned(id: id, by: owner)
             return
         }
+        if let owner {
+            let key = ObjectIdentifier(owner)
+            if let previous = ownedIDs[key], previous != id {
+                removeIfOwned(id: previous, by: owner)
+            }
+            ownedIDs[key] = id
+        }
         sources[id] = Source(
             frame: frame,
             viewBox: view.map(KVWeakViewBox.init),
@@ -130,9 +142,11 @@ final class KVTransitionSourceRegistry: ObservableObject {
             sources[id] = nil
             return
         }
+        let key = ObjectIdentifier(owner)
+        defer { if ownedIDs[key] == id { ownedIDs[key] = nil } }
         guard let existing = sources[id] else { return }
         // An entry with no recorded owner predates any claim, so whoever is speaking may clear it.
-        guard existing.owner == nil || existing.owner == ObjectIdentifier(owner) else { return }
+        guard existing.owner == nil || existing.owner == key else { return }
         sources[id] = nil
     }
 
