@@ -132,6 +132,48 @@ final class KVNavigationEntryTests: XCTestCase {
         )
     }
 
+    /// The push itself must animate with the route default — not only record it.
+    /// Before 3.6.2 the request handed to the driver carried the call-site value
+    /// alone, so a route-level `.reveal` or `.zoom` pushed with the host default.
+    func testPushWithoutTransitionAnimatesWithTheRouteDefault() async {
+        let router = routerWithRouteTransition(.flip3D())
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
+        router.push(TestRoute.screen("detail"))
+        await waitUntil { router.path.count == 1 }
+
+        XCTAssertEqual(driver.requests.map(\.operation), [.push])
+        XCTAssertEqual(driver.requests.first?.transitionOverride?.debugKind, .flip3D)
+    }
+
+    func testPushCallSiteTransitionStillBeatsTheRouteDefault() async {
+        let router = routerWithRouteTransition(.flip3D())
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
+        router.push(TestRoute.screen("detail"), transition: .fade)
+        await waitUntil { router.path.count == 1 }
+
+        XCTAssertEqual(driver.requests.first?.transitionOverride?.debugKind, .fade)
+    }
+
+    /// A route type without a default still leaves the push to the host.
+    func testPushOfUndeclaredRouteTypeHandsTheHostDefault() async {
+        let registry = KVRouteRegistry()
+        registry.registerTransition(OtherTestRoute.self) { _ in .fade }
+        retainedRegistry = registry
+        let router = KVAppRouter()
+        router.routeRegistry = registry
+        let driver = RecordingDriver()
+        router.transitionDriver = driver
+
+        router.push(TestRoute.screen("detail"))
+        await waitUntil { router.path.count == 1 }
+
+        XCTAssertNil(driver.requests.first?.transitionOverride)
+    }
+
     /// The pop side reads the same funnel, so going back plays the route's own
     /// transition in reverse rather than the host default.
     func testPopCarriesTheRouteDefault() async {

@@ -440,11 +440,15 @@ extension KVAppRouter {
             guard let self else { return }
             guard let finalRoute = await self.applyMiddlewares(to: route) else { return }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
+            // The same funnel the pop side reads — call site, then the route
+            // type's default. Passing the call-site value alone left a push
+            // without one on the host default while its pop played the route's
+            // transition, so the two directions animated differently.
             let request = KVTransitionRequest(
                 operation: .push,
                 from: self.navigationEntries.last,
                 to: entry,
-                transitionOverride: transition
+                transitionOverride: self.transitionOverride(for: entry)
             )
             await self.performNavigation(request) {
                 self.navigationEntries.append(entry)
@@ -494,11 +498,15 @@ extension KVAppRouter {
                 self.dynamicBuilders[dynamicRoute.id] = nil
             }
             let entry = self.makeEntry(route: finalRoute, transition: transition)
+            // The same funnel the pop side reads — call site, then the route
+            // type's default. Passing the call-site value alone left a push
+            // without one on the host default while its pop played the route's
+            // transition, so the two directions animated differently.
             let request = KVTransitionRequest(
                 operation: .push,
                 from: self.navigationEntries.last,
                 to: entry,
-                transitionOverride: transition
+                transitionOverride: self.transitionOverride(for: entry)
             )
             await self.performNavigation(request) {
                 self.navigationEntries.append(entry)

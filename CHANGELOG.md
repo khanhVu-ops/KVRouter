@@ -2,6 +2,27 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.6.2 - 2026-09-30
+
+### Fixed
+
+- A push without a call-site transition ignored the route type's default declared
+  with `routes.registerTransition(_:_:)` and animated with the host's
+  `defaultTransition` instead — while the pop of the same screen did use the route
+  default, so the two directions animated differently. Measured in an app whose
+  ViewModels push typed routes through `KVRouting`: a route-level `.reveal` and a
+  route-level `.zoom(sourceID:)` both pushed as `.system`.
+
+  `push(_:)` and `pushView(_:)` handed the driver the call-site value alone. They
+  now read the same funnel the pop side reads, `transitionOverride(for:)`: call
+  site first, then the route type's default, then (via `nil`) the host. A
+  `pushView` that middleware redirects to a typed route picks up that route's
+  default too. Call-site transitions still win, and a route type that declared
+  nothing still falls through to the host.
+
+  The existing test only checked the value stored with the entry, which was
+  already right; the new ones check the request the driver receives at push time.
+
 ## 3.6.1 - 2026-09-30
 
 ### Fixed
