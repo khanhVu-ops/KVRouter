@@ -294,6 +294,117 @@ final class KVInteractivePopGestureTests: XCTestCase {
         XCTAssertTrue(fixture.systemGesture.isEnabled)
     }
 
+    // MARK: - System back swipe with a hidden navigation bar
+
+    /// UIKit's delegate refuses the swipe whenever the bar is hidden; measured on
+    /// iOS 26.2 — the same swipe popped with the bar shown and did nothing hidden.
+    func testHiddenNavigationBarNoLongerBlocksTheSystemBackSwipe() {
+        let fixture = makeSystemDelegateFixture(barHidden: true, screens: 2, originalAllows: false)
+        XCTAssertTrue(fixture.gesture.delegate?.gestureRecognizerShouldBegin?(fixture.gesture) == true)
+    }
+
+    func testTheOverrideNeverPopsTheRoot() {
+        let fixture = makeSystemDelegateFixture(barHidden: true, screens: 1, originalAllows: false)
+        XCTAssertFalse(fixture.gesture.delegate?.gestureRecognizerShouldBegin?(fixture.gesture) == true)
+    }
+
+    /// With the bar shown a refusal is UIKit's own reason, and it stands.
+    func testARefusalWithTheBarShownStands() {
+        let fixture = makeSystemDelegateFixture(barHidden: false, screens: 2, originalAllows: false)
+        XCTAssertFalse(fixture.gesture.delegate?.gestureRecognizerShouldBegin?(fixture.gesture) == true)
+    }
+
+    func testOtherDelegateQuestionsStillReachUIKitsDelegate() {
+        let fixture = makeSystemDelegateFixture(barHidden: true, screens: 2, originalAllows: true)
+        let other = UIPanGestureRecognizer()
+        let answer = fixture.gesture.delegate?.gestureRecognizer?(
+            fixture.gesture,
+            shouldRecognizeSimultaneouslyWith: other
+        )
+        XCTAssertEqual(answer, true)
+        XCTAssertEqual(fixture.original.simultaneousAsked, 1)
+    }
+
+    /// UIKit's refusal arrives through an underscored delegate question, before
+    /// any public one. Declining those is what lets the public answers count.
+    func testUnderscoredDelegateQuestionsAreDeclined() {
+        let fixture = makeSystemDelegateFixture(barHidden: true, screens: 2, originalAllows: false)
+        let wrapper = fixture.gesture.delegate as? NSObject
+        XCTAssertEqual(wrapper?.responds(to: NSSelectorFromString("_gestureRecognizer:shouldReceiveEvent:")), false)
+        XCTAssertEqual(wrapper?.responds(to: #selector(UIGestureRecognizerDelegate.gestureRecognizer(_:shouldRecognizeSimultaneouslyWith:))), true)
+    }
+
+    func testTheEventIsReceivedOnlyWhenTheStackCanPop() {
+        let poppable = makeSystemDelegateFixture(barHidden: true, screens: 2, originalAllows: false)
+        XCTAssertEqual(poppable.gesture.delegate?.gestureRecognizer?(poppable.gesture, shouldReceive: UIEvent()), true)
+        let root = makeSystemDelegateFixture(barHidden: true, screens: 1, originalAllows: true)
+        XCTAssertEqual(root.gesture.delegate?.gestureRecognizer?(root.gesture, shouldReceive: UIEvent()), false)
+    }
+
+    /// iOS 26's pop-from-anywhere recognizer follows the edge one: off when the
+    /// host opts out, and wrapped the same way.
+    func testTheContentPopRecognizerIsWrappedAndFollowsTheOptOut() {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b")]
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        let navigationController = RecordingNavigationController()
+        navigationController.viewControllers = [UIViewController(), UIViewController()]
+        let edge = StubGestureRecognizer()
+        let content = StubGestureRecognizer()
+        let original = StubGestureDelegate(allowsBegin: false)
+        content.delegate = original
+        let controller = KVInteractiveTransitionController(
+            coordinator: coordinator,
+            systemGestureResolver: { _ in edge },
+            contentGestureResolver: { _ in content }
+        )
+        coordinator.interactivePopEnabled = true
+        controller.attach(to: navigationController)
+        retained.append(contentsOf: [router, coordinator, navigationController, original] as [AnyObject])
+
+        XCTAssertTrue(content.delegate is KVSystemPopGestureDelegate)
+        XCTAssertTrue(content.isEnabled)
+
+        coordinator.interactivePopEnabled = false
+        controller.refreshAvailability()
+        XCTAssertFalse(content.isEnabled)
+
+        controller.detach()
+        XCTAssertTrue(content.delegate === original)
+        XCTAssertTrue(content.isEnabled)
+    }
+
+    func testDetachHandsUIKitItsOwnDelegateBack() {
+        let fixture = makeSystemDelegateFixture(barHidden: true, screens: 2, originalAllows: false)
+        fixture.controller.detach()
+        XCTAssertTrue(fixture.gesture.delegate === fixture.original)
+    }
+
+    private func makeSystemDelegateFixture(
+        barHidden: Bool,
+        screens: Int,
+        originalAllows: Bool
+    ) -> (controller: KVInteractiveTransitionController, gesture: StubGestureRecognizer, original: StubGestureDelegate) {
+        let router = KVAppRouter()
+        router.path = [.screen("a"), .screen("b")]
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        let navigationController = RecordingNavigationController()
+        navigationController.viewControllers = (0..<screens).map { _ in UIViewController() }
+        navigationController.setNavigationBarHidden(barHidden, animated: false)
+        let original = StubGestureDelegate(allowsBegin: originalAllows)
+        let gesture = StubGestureRecognizer()
+        gesture.delegate = original
+        let controller = KVInteractiveTransitionController(
+            coordinator: coordinator,
+            systemGestureResolver: { _ in gesture }
+        )
+        controller.attach(to: navigationController)
+        retained.append(contentsOf: [router, coordinator, navigationController, original] as [AnyObject])
+        return (controller, gesture, original)
+    }
+
     /// End-to-end through the bridge rather than the stubs: setting the flag is
     /// what refreshes availability, with no explicit call from the host.
     func testFlippingTheFlagRefreshesAvailabilityThroughTheBridge() {
@@ -450,5 +561,29 @@ private final class StubGestureRecognizer: UIGestureRecognizer {
     override var state: UIGestureRecognizer.State {
         get { stubbedState }
         set { stubbedState = newValue }
+    }
+}
+
+/// Plays UIKit's delegate on the system recognizer: says no to beginning when
+/// told to (as UIKit does with the bar hidden) and counts what it is asked.
+@MainActor
+private final class StubGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    let allowsBegin: Bool
+    private(set) var simultaneousAsked = 0
+
+    init(allowsBegin: Bool) {
+        self.allowsBegin = allowsBegin
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        allowsBegin
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        simultaneousAsked += 1
+        return true
     }
 }

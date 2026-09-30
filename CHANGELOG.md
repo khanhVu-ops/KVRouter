@@ -2,6 +2,32 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.6.1 - 2026-09-30
+
+### Fixed
+
+- The back swipe on `.system` did nothing when the navigation bar was hidden —
+  the usual setup for a SwiftUI app that draws its own header with
+  `.toolbar(.hidden, for: .navigationBar)`. Measured on iOS 26.2: the same swipe
+  popped with the bar shown and did nothing with it hidden. Screens on a custom
+  transition were never affected, since the router drives those itself.
+
+  UIKit's own delegate on the system recognizer refuses the swipe while the bar
+  is hidden, and it does so through an underscored delegate question asked before
+  any public one, so neither `gestureRecognizer(_:shouldReceive:)` nor
+  `gestureRecognizerShouldBegin` ever ran. The router now wraps that delegate.
+  The wrapper declines underscored selectors (it neither implements nor names
+  one), so UIKit falls back to the public questions, and answers them by allowing
+  a pop only when it is sound on its own: more than one screen, no transition
+  running, nothing presented on top. Every other public delegate question still
+  goes to UIKit's delegate. Detaching hands UIKit its own delegate back.
+
+- On iOS 26, `interactiveContentPopGestureRecognizer` (pop from anywhere in the
+  content) is now wrapped the same way and follows the same availability as the
+  edge recognizer. It is switched off for custom transitions and when the host
+  opts out with `interactivePopEnabled: false`. Left alone, it could start a UIKit
+  pop over a screen the router was driving.
+
 ## 3.6.0 - 2026-09-30
 
 ### Changed

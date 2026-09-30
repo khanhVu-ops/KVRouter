@@ -6,8 +6,17 @@ final class KVInteractiveTransitionController: NSObject,
     private weak var coordinator: KVTransitionCoordinator?
     private weak var navigationController: UINavigationController?
     private weak var systemEdgePanGesture: UIGestureRecognizer?
+    /// iOS 26's pop-from-anywhere recognizer. Ruled by the same availability as the
+    /// edge one: on for `.system`, off for custom transitions and when the host
+    /// opts out — left alone it would start UIKit pops over a router-driven screen.
+    private weak var contentPopGesture: UIGestureRecognizer?
+    /// Wrap UIKit's delegates on the system recognizers so `.system` screens keep
+    /// their back swipe with the navigation bar hidden. Held strongly here — a
+    /// recognizer's `delegate` is weak.
+    private var systemPopDelegates: [KVSystemPopGestureDelegate] = []
     private let percentDrivenFactory: () -> UIPercentDrivenInteractiveTransition
     private let systemGestureResolver: (UINavigationController) -> UIGestureRecognizer?
+    private let contentGestureResolver: (UINavigationController) -> UIGestureRecognizer?
     /// A plain pan, not a `UIScreenEdgePanGestureRecognizer`.
     ///
     /// The screen-edge recognizer's hit region is UIKit's own and cannot be
@@ -35,11 +44,16 @@ final class KVInteractiveTransitionController: NSObject,
         },
         systemGestureResolver: @escaping (UINavigationController) -> UIGestureRecognizer? = {
             $0.interactivePopGestureRecognizer
+        },
+        contentGestureResolver: @escaping (UINavigationController) -> UIGestureRecognizer? = {
+            if #available(iOS 26.0, *) { return $0.interactiveContentPopGestureRecognizer }
+            return nil
         }
     ) {
         self.coordinator = coordinator
         self.percentDrivenFactory = percentDrivenFactory
         self.systemGestureResolver = systemGestureResolver
+        self.contentGestureResolver = contentGestureResolver
         super.init()
         edgePanGesture.addTarget(self, action: #selector(handleEdgePan(_:)))
         edgePanGesture.delegate = self
@@ -60,6 +74,15 @@ final class KVInteractiveTransitionController: NSObject,
         // `attach` from depending on that.
         navigationController.loadViewIfNeeded()
         systemEdgePanGesture = systemGestureResolver(navigationController)
+        contentPopGesture = contentGestureResolver(navigationController)
+        for gesture in [systemEdgePanGesture, contentPopGesture].compactMap({ $0 }) {
+            let wrapper = KVSystemPopGestureDelegate(
+                original: gesture.delegate,
+                navigationController: navigationController
+            )
+            gesture.delegate = wrapper
+            systemPopDelegates.append(wrapper)
+        }
         navigationController.view.addGestureRecognizer(edgePanGesture)
         refreshAvailability()
     }
@@ -79,7 +102,17 @@ final class KVInteractiveTransitionController: NSObject,
         // hand-back — and the only state that matters is the one the router set
         // while it owned it.
         systemEdgePanGesture?.isEnabled = true
+        contentPopGesture?.isEnabled = true
+        // Give UIKit its own delegates back — a detached router must leave the
+        // recognizers exactly as it found them.
+        for gesture in [systemEdgePanGesture, contentPopGesture].compactMap({ $0 }) {
+            if let wrapper = systemPopDelegates.first(where: { gesture.delegate === $0 }) {
+                gesture.delegate = wrapper.original
+            }
+        }
+        systemPopDelegates = []
         systemEdgePanGesture = nil
+        contentPopGesture = nil
         navigationController = nil
         resetSession()
     }
@@ -116,13 +149,13 @@ final class KVInteractiveTransitionController: NSObject,
     private func setSystemGesture(enabled: Bool) {
         systemGestureRetry?.cancel()
         systemGestureRetry = nil
-        guard let gesture = systemEdgePanGesture,
-              gesture.isEnabled != enabled else {
-            return
-        }
+        let pending = [systemEdgePanGesture, contentPopGesture]
+            .compactMap { $0 }
+            .filter { $0.isEnabled != enabled }
+        guard !pending.isEmpty else { return }
 
-        switch gesture.state {
-        case .began, .changed, .ended:
+        let tracking: Set<UIGestureRecognizer.State> = [.began, .changed, .ended]
+        if pending.contains(where: { tracking.contains($0.state) }) {
             systemGestureRetry = Task { [weak self] in
                 // A recognizer leaves .ended/.changed when UIKit finishes the
                 // turn of the loop it is in, so one hop is normally enough; the
@@ -131,9 +164,9 @@ final class KVInteractiveTransitionController: NSObject,
                 guard !Task.isCancelled else { return }
                 self?.setSystemGesture(enabled: enabled)
             }
-        default:
-            gesture.isEnabled = enabled
+            return
         }
+        pending.forEach { $0.isEnabled = enabled }
     }
 
     func begin() -> Bool {
