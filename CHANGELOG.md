@@ -2,6 +2,25 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.6.0 - 2026-09-30
+
+### Changed
+
+- Requires swiftui-introspect **27.x** (was 26.x). 27.0.0 needs Swift tools 6.2,
+  which this package already declares, and adds range-based platform predicates.
+  An app that pins swiftui-introspect 26 directly has to move to 27 alongside this
+  release, which is why it is a minor rather than a patch.
+
+### Fixed
+
+- `KVRouterHost` attached to its `UINavigationController` only on the iOS versions
+  it listed by name (`.v16, .v17, .v18, .v26`). On any OS outside that list, iOS 27
+  included, the introspection closure never ran, so the router never attached — and
+  custom transitions, zoom and the host's back-swipe settings all go through that
+  attachment. The host now matches `.iOS(.v16...)`. NavigationStack uses the same
+  navigation-controller selector on every release since iOS 16, so a range covers
+  future versions without a package update.
+
 ## 3.5.3 - 2026-09-13
 
 ### Fixed

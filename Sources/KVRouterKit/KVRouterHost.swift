@@ -126,7 +126,11 @@ public struct KVRouterHost<Root: View>: View {
         }
         .introspect(
             .navigationStack,
-            on: .iOS(.v16, .v17, .v18, .v26),
+            // A range, not a list: NavigationStack is backed by the same
+            // UINavigationController selector on every release since 16, and a
+            // list silently stops matching on the first OS it does not name —
+            // on iOS 27 with `.v16, .v17, .v18, .v26` the router never attached.
+            on: .iOS(.v16...),
             scope: [.receiver, .ancestor]
         ) { navigationController in
             coordinator.attach(to: navigationController)
