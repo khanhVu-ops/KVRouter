@@ -1,5 +1,6 @@
 import XCTest
 import KVRouterCore
+import SwiftUI
 @testable import KVRouterKit
 
 @MainActor
@@ -334,6 +335,33 @@ final class KVTransitionCoordinatorTests: XCTestCase {
 
         XCTAssertFalse(coordinator.usesNativeZoom(for: entry))
         XCTAssertEqual(coordinator.retainedNativeZoomEntryCount(), 0)
+    }
+
+    /// A pop changes the path before its animation runs, and the outgoing screen re-renders
+    /// mid-transition. Dropping a `pushView` builder on the path change rebuilt that screen as
+    /// an empty view: a black first frame, and an anchored zoom's destination view gone, so the
+    /// pop fell back to `.scaleAndFade`. The builder must survive until the transition finishes.
+    func testPushViewBuilderSurvivesThePopUntilTheTransitionFinishes() async {
+        let router = KVAppRouter()
+        let coordinator = KVTransitionCoordinator(defaultTransition: .system)
+        coordinator.router = router
+        let navigationController = UINavigationController(rootViewController: UIViewController())
+        coordinator.attach(to: navigationController)
+
+        router.pushView { Text("Viewer") }
+        await waitUntil { router.navigationEntries.count == 1 }
+        guard let dynamic = router.navigationEntries.first?.route.unwrap(KVDynamicViewRoute.self) else {
+            return XCTFail("pushView should record a dynamic route")
+        }
+        XCTAssertNotNil(router.dynamicView(for: dynamic))
+
+        // The pop commits: the entry leaves the path while its animation is still running.
+        router.navigationEntries = []
+        XCTAssertNotNil(router.dynamicView(for: dynamic), "The outgoing screen still renders during the pop")
+
+        // UIKit reports the transition finished; now it can go.
+        coordinator.navigationControllerDidShow(navigationController)
+        XCTAssertNil(router.dynamicView(for: dynamic))
     }
 
     /// A native zoom can leave `matchedTransitionSource` holding SwiftUI's

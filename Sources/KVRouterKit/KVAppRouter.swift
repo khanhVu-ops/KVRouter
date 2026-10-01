@@ -153,6 +153,8 @@ public final class KVAppRouter: ObservableObject {
     /// now fields on ``KVDynamicViewRoute`` itself, so there is nothing left to
     /// keep in sync.
     private var dynamicBuilders: [UUID: () -> AnyView] = [:]
+    /// Dynamic screens removed from the path whose builder must outlive the pop animation.
+    private var retiredBuilderIDs: Set<UUID> = []
 
     // MARK: - Serial Operation Queue
 
@@ -341,8 +343,23 @@ public final class KVAppRouter: ObservableObject {
         let liveIDs = Set(newEntries.map(\.id))
         for entry in oldEntries where !liveIDs.contains(entry.id) {
             transitionOverrides[entry.id] = nil
-            cleanupBuilder(for: entry.route)
+            // Not yet: a pop changes the path *before* its animation runs, and the outgoing
+            // screen re-renders mid-transition. Dropping its builder here rebuilt a `pushView`
+            // screen as an empty view — a black frame, and an anchored zoom's destination gone.
+            if let dynamic = entry.route.unwrap(KVDynamicViewRoute.self) {
+                retiredBuilderIDs.insert(dynamic.id)
+            }
         }
+    }
+
+    /// Drops builders of dynamic screens that left the path, once the navigation controller has
+    /// finished showing the result — see ``cleanupRemovedEntries(from:to:)``.
+    func pruneRetiredBuilders() {
+        let live = Set(_navigationEntries.compactMap { $0.route.unwrap(KVDynamicViewRoute.self)?.id })
+        for id in retiredBuilderIDs where !live.contains(id) {
+            dynamicBuilders[id] = nil
+        }
+        retiredBuilderIDs = retiredBuilderIDs.intersection(live)
     }
 }
 

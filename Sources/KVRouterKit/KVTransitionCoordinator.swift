@@ -574,6 +574,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         // `matchedTransitionSource` — the source stayed invisible. A button pop
         // was fast enough to finish before the re-render; a swipe was not.
         pruneEntryMetadata()
+        router?.pruneRetiredBuilders()
         bridge?.refreshInteractivePopAvailability()
     }
 

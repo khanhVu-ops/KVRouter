@@ -2,6 +2,18 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.7.1 - 2026-10-02
+
+### Fixed
+
+- Popping a `pushView { }` screen on the router's own animator — an anchored zoom
+  (`zoom(sourceID:destinationID:)`), and every custom transition — dropped the screen's
+  builder as soon as the path changed, which is before the pop animation runs. The
+  outgoing screen re-rendered mid-transition as an empty view: a black first frame, and an
+  anchored zoom lost its destination view and fell back to `.scaleAndFade`, so the image
+  never flew back to its thumbnail. The builder now lives until the navigation controller
+  reports the transition finished, like the native-zoom metadata does. Measured on iOS 26.2.
+
 ## 3.7.0 - 2026-10-01
 
 ### Added
