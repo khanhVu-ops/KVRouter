@@ -2,6 +2,37 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.7.0 - 2026-10-01
+
+### Added
+
+- `KVNavigationTransition.zoom(sourceID:destinationID:)` and
+  `View.kvTransitionDestination(id:cornerRadius:)`: an anchored zoom. The incoming
+  screen starts clipped to one of its own views, laid over the source, and opens to
+  the full screen while that view travels to its place; the pop lands it back on
+  the source. Built for a source that is the screen's own control in miniature — a
+  home input bar opening a chat whose composer sits at the bottom — where
+  `.zoom(sourceID:)` squeezed the top of the chat into the bar and the composer then
+  landed somewhere else. The source is hidden while it runs. Always on the router's
+  own animator (SwiftUI's zoom cannot align to a destination view), so the back
+  swipe is interactive on every iOS version. Missing source or destination →
+  `.scaleAndFade`, as with `zoom`.
+
+### Fixed
+
+- `router.pop()` of a screen pushed with native zoom (iOS 18+) cut straight to the
+  screen below instead of zooming back into the source. The pop only edited the
+  path, which reaches UIKit as `animated: false`, and SwiftUI plays the zoom back
+  only for its own dismissal. It looked fine whenever the two screens disagreed on
+  the navigation bar — SwiftUI animated the bar and the zoom rode along — so an app
+  hiding the bar on both screens saw every router pop cut. Measured on iOS 26.2.
+
+  The router now pops such a screen through the destination's own `DismissAction`,
+  the same pop a swipe or back button runs, and holds the queue until the path has
+  changed (editing the path itself if SwiftUI ignored the dismiss). Forcing UIKit's
+  `animated` flag instead was tried and rejected: it ran a second transition next to
+  SwiftUI's and left the screen below shifted half a screen sideways.
+
 ## 3.6.2 - 2026-09-30
 
 ### Fixed

@@ -233,6 +233,7 @@ public struct KVNavigationTransition: Sendable {
         case pageTurn(Edge)
         case flip3D(KVFlip3DAxis)
         case zoom(KVTransitionSourceID)
+        case anchoredZoom(source: KVTransitionSourceID, destination: KVTransitionSourceID)
         case custom(KVCustomTransitionSpec)
     }
 
@@ -248,6 +249,7 @@ public struct KVNavigationTransition: Sendable {
         case pageTurn
         case flip3D
         case zoom
+        case anchoredZoom
         case custom
     }
 
@@ -301,6 +303,35 @@ public struct KVNavigationTransition: Sendable {
         )
     }
 
+    /// Grows the incoming screen out of the source **through one of its own views**.
+    ///
+    /// ``zoom(sourceID:)`` scales the whole incoming screen into the source's frame, which
+    /// reads well when the two have the same shape (a thumbnail and its photo). It reads badly
+    /// when they do not: a wide, short input bar zoomed into a full screen squeezes the top of
+    /// that screen into the bar, and the screen's own input then lands somewhere else.
+    ///
+    /// Here the incoming screen starts clipped to the view tagged
+    /// ``SwiftUI/View/kvTransitionDestination(id:)`` with `destinationID`, laid over the
+    /// source, and the clip opens to the full screen while that view travels to its own place.
+    /// The pop runs it backwards, landing the destination view back on the source. The source
+    /// is hidden while the transition runs, so it never shows twice.
+    ///
+    /// Always runs on the router's own animator — UIKit's zoom has an alignment rect for
+    /// this, SwiftUI's does not — so the back swipe is interactive on every iOS version.
+    /// Missing source or destination view → ``scaleAndFade``, as with `zoom`.
+    public static func zoom<Source: Hashable & Sendable, Destination: Hashable & Sendable>(
+        sourceID: Source,
+        destinationID: Destination
+    ) -> Self {
+        Self(
+            kind: .anchoredZoom(
+                source: KVTransitionSourceID(sourceID),
+                destination: KVTransitionSourceID(destinationID)
+            ),
+            animationOverride: nil
+        )
+    }
+
     public static func custom(
         push: KVTransitionStage,
         pop: KVPopTransition = .mirrored,
@@ -347,10 +378,22 @@ public struct KVNavigationTransition: Sendable {
             return .timingCurve(0.20, 0.80, 0.20, 1, duration: 0.40)
         case .zoom:
             return .spring(response: 0.38, dampingFraction: 0.94)
+        case .anchoredZoom:
+            // Travels further than a plain zoom (the destination view crosses the screen),
+            // so a touch longer for the same feel.
+            return .spring(response: 0.46, dampingFraction: 0.92)
         case .flip3D:
             return .timingCurve(0.65, 0, 0.35, 1, duration: 0.50)
         case .custom(let custom):
             return custom.animation
+        }
+    }
+
+    /// The view a hero transition grows out of, plain or anchored.
+    var heroSourceID: KVTransitionSourceID? {
+        switch kind {
+        case .zoom(let source), .anchoredZoom(let source, _): source
+        default: nil
         }
     }
 
@@ -378,6 +421,7 @@ public struct KVNavigationTransition: Sendable {
         case .pageTurn: .pageTurn
         case .flip3D: .flip3D
         case .zoom: .zoom
+        case .anchoredZoom: .anchoredZoom
         case .custom: .custom
         }
     }

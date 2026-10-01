@@ -93,6 +93,15 @@ extension KVNavigationTransition {
                 incoming: .identity.scale(0.94).opacity(0),
                 outgoing: .identity.scale(0.98).opacity(0.92)
             )
+        case .anchoredZoom:
+            // `incoming` is only the fallback look: with both views on screen the animator
+            // drives the incoming screen from the anchored geometry instead. The screen
+            // underneath recedes further than for a plain zoom — the incoming one starts as
+            // a small box, so most of the frame is the outgoing screen.
+            return KVTransitionStage(
+                incoming: .identity.scale(0.94).opacity(0),
+                outgoing: .identity.scale(0.97).opacity(0.55)
+            )
         case .slide(let edge):
             let vector = edge.kvTransitionVector
             return KVTransitionStage(

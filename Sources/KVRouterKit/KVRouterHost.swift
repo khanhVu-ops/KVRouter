@@ -178,6 +178,7 @@ private struct KVRouterDestinationContent: View {
     let namespace: Namespace.ID
 
     @Environment(\.kvRouteRegistry) private var registry
+    @Environment(\.dismiss) private var dismiss
 
     @ViewBuilder
     var body: some View {
@@ -188,6 +189,9 @@ private struct KVRouterDestinationContent: View {
                 .navigationTransition(
                     .zoom(sourceID: nativeSourceID, in: namespace)
                 )
+                .onAppear {
+                    coordinator.registerNativeZoomDismiss(dismiss, for: entry)
+                }
         } else {
             destination
         }

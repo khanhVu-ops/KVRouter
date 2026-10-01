@@ -56,6 +56,15 @@ struct KVNativeTransitionSourceID: Hashable {
 @MainActor
 final class KVTransitionSourceOwner: ObservableObject {}
 
+/// Registry key for a ``SwiftUI/View/kvTransitionDestination(id:cornerRadius:)``.
+///
+/// Destinations share the registry with sources — same probe, same weak view, same ownership
+/// rules — but not the id space: an app naming its destination `"prompt"` after a source
+/// `"prompt"` must not have one overwrite the other.
+struct KVTransitionDestinationKey: Hashable {
+    let id: AnyHashable
+}
+
 @MainActor
 final class KVTransitionSourceRegistry: ObservableObject {
     struct Source {
@@ -101,6 +110,27 @@ final class KVTransitionSourceRegistry: ObservableObject {
     /// Geometry probes deliberately do not publish, or scrolling a grid would
     /// invalidate every matched transition source on every layout pass.
     @Published private(set) var nativeSourceRevision: UInt64 = 0
+
+    /// Sources an anchored zoom is standing in for right now. Their view renders at opacity
+    /// 0 so the source never shows twice — once in place, once travelling. Published, but
+    /// only at a transition's start and end.
+    @Published private(set) var hiddenSourceIDs: Set<AnyHashable> = []
+
+    func setSourceHidden(_ hidden: Bool, id: AnyHashable) {
+        if hidden {
+            hiddenSourceIDs.insert(id)
+        } else {
+            hiddenSourceIDs.remove(id)
+        }
+    }
+
+    func isSourceHidden(_ id: AnyHashable) -> Bool {
+        hiddenSourceIDs.contains(id)
+    }
+
+    func destination(for id: AnyHashable) -> Source? {
+        source(for: AnyHashable(KVTransitionDestinationKey(id: id)))
+    }
 
     func update(
         id: AnyHashable,
@@ -275,9 +305,23 @@ private struct KVTransitionSourceModifier: ViewModifier {
                 registry?.remove(id: id, owner: owner)
             }
 
-        if #available(iOS 18.0, *),
-           let namespace,
-           let registry {
+        if let registry {
+            KVTransitionSourceVisibility(
+                content: nativeOrPlain(observedContent, registry: registry),
+                id: id,
+                registry: registry
+            )
+        } else {
+            observedContent
+        }
+    }
+
+    @ViewBuilder
+    private func nativeOrPlain<V: View>(
+        _ observedContent: V,
+        registry: KVTransitionSourceRegistry
+    ) -> some View {
+        if #available(iOS 18.0, *), let namespace {
             KVNativeTransitionSource(
                 content: observedContent,
                 id: id,
@@ -288,6 +332,47 @@ private struct KVTransitionSourceModifier: ViewModifier {
         } else {
             observedContent
         }
+    }
+}
+
+/// Hides a source while an anchored zoom stands in for it — see
+/// ``KVTransitionSourceRegistry/hiddenSourceIDs``.
+private struct KVTransitionSourceVisibility<Content: View>: View {
+    let content: Content
+    let id: AnyHashable
+    @ObservedObject var registry: KVTransitionSourceRegistry
+
+    var body: some View {
+        content.opacity(registry.isSourceHidden(id) ? 0 : 1)
+    }
+}
+
+/// Registers where a ``SwiftUI/View/kvTransitionDestination(id:cornerRadius:)`` sits, with the
+/// same probe as a source and none of a source's native-zoom wiring.
+private struct KVTransitionDestinationModifier: ViewModifier {
+    let id: AnyHashable
+    let cornerRadius: CGFloat
+
+    @Environment(\.kvTransitionSourceRegistry) private var registry
+    @StateObject private var owner = KVTransitionSourceOwner()
+
+    func body(content: Content) -> some View {
+        let key = AnyHashable(KVTransitionDestinationKey(id: id))
+        content
+            .background {
+                KVViewProbe { view, frame in
+                    registry?.update(
+                        id: key,
+                        frame: frame,
+                        view: view,
+                        cornerRadius: cornerRadius,
+                        owner: owner
+                    )
+                }
+            }
+            .onDisappear {
+                registry?.remove(id: key, owner: owner)
+            }
     }
 }
 
@@ -328,6 +413,31 @@ public extension View {
     ) -> some View {
         modifier(
             KVTransitionSourceModifier(
+                id: AnyHashable(id),
+                cornerRadius: cornerRadius
+            )
+        )
+    }
+}
+
+public extension View {
+
+    /// Marks the view an anchored zoom travels through on the **incoming** screen — see
+    /// ``KVNavigationTransition/zoom(sourceID:destinationID:)``.
+    ///
+    /// Typically the screen's own version of the source: a home screen's input bar as the
+    /// source, the chat screen's composer as the destination.
+    ///
+    /// - Parameters:
+    ///   - id: Matches the `destinationID` passed to the transition.
+    ///   - cornerRadius: The view's corner radius, for the same reason as on
+    ///     ``kvTransitionSource(id:cornerRadius:)``.
+    func kvTransitionDestination<ID: Hashable>(
+        id: ID,
+        cornerRadius: CGFloat = 0
+    ) -> some View {
+        modifier(
+            KVTransitionDestinationModifier(
                 id: AnyHashable(id),
                 cornerRadius: cornerRadius
             )

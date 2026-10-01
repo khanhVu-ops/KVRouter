@@ -101,6 +101,7 @@ final class KVManagedTransitionView {
     let view: UIView
     private let snapshot: Snapshot
     private var transitionMask: UIView?
+    private var anchoredMask: UIView?
 
     init(_ view: UIView) {
         self.view = view
@@ -191,6 +192,34 @@ final class KVManagedTransitionView {
         view.layer.masksToBounds = snapshot.masksToBounds
         view.layer.zPosition = snapshot.zPosition
         transitionMask?.transform = .identity
+        if let anchoredMask {
+            anchoredMask.frame = view.bounds
+            anchoredMask.layer.cornerRadius = 0
+        }
+    }
+
+    /// The incoming (push) or outgoing (pop) screen clipped to its destination view and laid
+    /// over the source — see ``KVAnchoredHeroGeometry``.
+    ///
+    /// A `UIView` mask for the same reason as the reveal: `UIViewPropertyAnimator` animates a
+    /// view's frame and corner radius, and leaves a bare `CALayer` mask snapping.
+    func applyAnchoredHero(_ geometry: KVAnchoredHeroGeometry) {
+        let mask = anchoredMask ?? makeAnchoredMask()
+        let resolved = geometry.resolved(viewFrame: view.frame)
+        view.alpha = snapshot.alpha
+        view.layer.transform = CATransform3DConcat(snapshot.transform, resolved.transform)
+        mask.frame = resolved.maskFrame
+        mask.layer.cornerRadius = resolved.maskCornerRadius
+    }
+
+    private func makeAnchoredMask() -> UIView {
+        let mask = UIView(frame: view.bounds)
+        mask.backgroundColor = .black
+        mask.isUserInteractionEnabled = false
+        mask.layer.cornerCurve = .continuous
+        view.mask = mask
+        anchoredMask = mask
+        return mask
     }
 
     func applyHero(
@@ -223,6 +252,7 @@ final class KVManagedTransitionView {
         view.layer.isDoubleSided = snapshot.isDoubleSided
         view.isUserInteractionEnabled = snapshot.isUserInteractionEnabled
         transitionMask = nil
+        anchoredMask = nil
     }
 
     /// A `UIView`, not a `CALayer`, and that is load-bearing.
@@ -287,6 +317,8 @@ final class KVViewControllerTransitionAnimator: NSObject,
     private let operation: KVTransitionOperation
     private let descriptor: KVTransitionDescriptor
     private let heroSourceProvider: (() -> KVTransitionSourceRegistry.Source?)?
+    private let heroDestinationProvider: (() -> KVTransitionSourceRegistry.Source?)?
+    private let setSourceHidden: ((Bool) -> Void)?
     private let heroFallbackDescriptor: KVTransitionDescriptor?
     private let onCompletion: (Bool) -> Void
     private var cachedAnimators: [ObjectIdentifier: UIViewPropertyAnimator] = [:]
@@ -295,12 +327,16 @@ final class KVViewControllerTransitionAnimator: NSObject,
         operation: KVTransitionOperation,
         descriptor: KVTransitionDescriptor,
         heroSourceProvider: (() -> KVTransitionSourceRegistry.Source?)? = nil,
+        heroDestinationProvider: (() -> KVTransitionSourceRegistry.Source?)? = nil,
+        setSourceHidden: ((Bool) -> Void)? = nil,
         heroFallbackDescriptor: KVTransitionDescriptor? = nil,
         onCompletion: @escaping (Bool) -> Void
     ) {
         self.operation = operation
         self.descriptor = descriptor
         self.heroSourceProvider = heroSourceProvider
+        self.heroDestinationProvider = heroDestinationProvider
+        self.setSourceHidden = setSourceHidden
         self.heroFallbackDescriptor = heroFallbackDescriptor
         self.onCompletion = onCompletion
     }
@@ -372,9 +408,20 @@ final class KVViewControllerTransitionAnimator: NSObject,
         toView.layoutIfNeeded()
 
         let heroGeometry = heroSourceProvider?()?.resolved(in: container)
-        let activeDescriptor = heroSourceProvider != nil && heroGeometry == nil
+        // The zoomed screen is at identity here — just laid out on a push, still
+        // untouched on a pop — so its destination view resolves to where it rests.
+        let anchoredGeometry: KVAnchoredHeroGeometry? = heroGeometry.flatMap { source in
+            heroDestinationProvider?()?.resolved(in: container).map {
+                KVAnchoredHeroGeometry(source: source, destination: $0)
+            }
+        }
+        let missingHero = heroSourceProvider != nil && heroGeometry == nil
+        let missingAnchor = heroDestinationProvider != nil && anchoredGeometry == nil
+        let activeDescriptor = missingHero || missingAnchor
             ? heroFallbackDescriptor ?? descriptor
             : descriptor
+        // Only when the anchored path actually runs: a fallback never stands in for the source.
+        let hidesSource = anchoredGeometry != nil
 
         let size = container.bounds.size
         let incoming = KVManagedTransitionView(toView)
@@ -385,18 +432,23 @@ final class KVViewControllerTransitionAnimator: NSObject,
         incoming.prepare(for: activeDescriptor.incoming.state, containerSize: size)
         outgoing.prepare(for: activeDescriptor.outgoing.state, containerSize: size)
 
-        if operation == .push, let heroGeometry {
+        if operation == .push, let anchoredGeometry {
+            incoming.applyAnchoredHero(anchoredGeometry)
+        } else if operation == .push, !missingAnchor, let heroGeometry {
             incoming.applyHero(heroGeometry, fullFrame: toView.frame)
         } else {
             incoming.apply(activeDescriptor.incoming.state, containerSize: size)
         }
+        if hidesSource { setSourceHidden?(true) }
 
         animator.addAnimations({
             incoming.applyIdentity()
         }, delayFactor: activeDescriptor.incomingDelayFactor)
 
         animator.addAnimations({
-            if self.operation == .pop, let heroGeometry {
+            if self.operation == .pop, let anchoredGeometry {
+                outgoing.applyAnchoredHero(anchoredGeometry)
+            } else if self.operation == .pop, !missingAnchor, let heroGeometry {
                 outgoing.applyHero(heroGeometry, fullFrame: fromView.frame)
             } else {
                 outgoing.apply(
@@ -405,10 +457,11 @@ final class KVViewControllerTransitionAnimator: NSObject,
                 )
             }
         }, delayFactor: activeDescriptor.outgoingDelayFactor)
-        animator.addCompletion { [onCompletion] _ in
+        animator.addCompletion { [onCompletion, setSourceHidden] _ in
             let cancelled = transitionContext.transitionWasCancelled
             incoming.restore()
             outgoing.restore()
+            if hidesSource { setSourceHidden?(false) }
             transitionContext.completeTransition(!cancelled)
 
             // Reinsert the visible live view to keep hosting views responsive on iOS 16.
@@ -420,4 +473,59 @@ final class KVViewControllerTransitionAnimator: NSObject,
 
         return animator
     }
+}
+
+/// Where an anchored zoom puts the zoomed screen: clipped to its destination view, and moved
+/// and scaled so that clip sits exactly on the source.
+///
+/// Uniform scale, matched on width: the destination is the screen's own version of the
+/// source (an input bar and the composer it opens into), so the widths correspond and the
+/// content must not stretch. The clip takes the source's height and hangs from the
+/// destination's top edge, which is where such views keep their content — a composer pads
+/// its bottom for the home indicator.
+struct KVAnchoredHeroGeometry {
+    /// Both in the transition container's coordinates.
+    let source: KVHeroTransitionGeometry
+    let destination: KVHeroTransitionGeometry
+
+    /// - Parameter viewFrame: The zoomed screen's frame in the container, at identity.
+    func resolved(viewFrame: CGRect) -> KVResolvedAnchoredHeroState {
+        let anchor = destination.frame.offsetBy(dx: -viewFrame.minX, dy: -viewFrame.minY)
+        guard anchor.width > 0, viewFrame.width > 0, viewFrame.height > 0 else {
+            return KVResolvedAnchoredHeroState(
+                transform: CATransform3DIdentity,
+                maskFrame: CGRect(origin: .zero, size: viewFrame.size),
+                maskCornerRadius: 0
+            )
+        }
+        let scale = source.frame.width / anchor.width
+        let maskFrame = CGRect(
+            x: anchor.minX,
+            y: anchor.minY,
+            width: anchor.width,
+            height: source.frame.height / scale
+        )
+        // The layer scales about its centre; move the clip's top-left onto the source's.
+        let center = CGPoint(x: viewFrame.midX, y: viewFrame.midY)
+        let clipOrigin = CGPoint(x: viewFrame.minX + maskFrame.minX, y: viewFrame.minY + maskFrame.minY)
+        let translation = CGSize(
+            width: source.frame.minX - center.x - scale * (clipOrigin.x - center.x),
+            height: source.frame.minY - center.y - scale * (clipOrigin.y - center.y)
+        )
+        var transform = CATransform3DIdentity
+        transform = CATransform3DTranslate(transform, translation.width, translation.height, 0)
+        transform = CATransform3DScale(transform, scale, scale, 1)
+        return KVResolvedAnchoredHeroState(
+            transform: transform,
+            maskFrame: maskFrame,
+            maskCornerRadius: source.cornerRadius / scale
+        )
+    }
+}
+
+struct KVResolvedAnchoredHeroState {
+    let transform: CATransform3D
+    /// In the zoomed screen's own coordinates, before the transform.
+    let maskFrame: CGRect
+    let maskCornerRadius: CGFloat
 }

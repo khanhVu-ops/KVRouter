@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.6.2"
+        from: "3.7.0"
     )
 ]
 ```
@@ -290,6 +290,31 @@ CardView(item: item)
     .kvTransitionSource(id: item.id, cornerRadius: 24)
 ```
 
+### Anchored Zoom
+
+`.zoom(sourceID:)` scales the whole incoming screen into the source, which suits
+sources shaped like the screen (a thumbnail and its photo). When the source is
+the screen's own control in miniature — a home input bar that opens a chat whose
+composer sits at the bottom — zoom *through* that control instead:
+
+```swift
+// Source screen
+PromptBar().kvTransitionSource(id: "prompt", cornerRadius: 24)
+
+// Destination screen
+Composer().kvTransitionDestination(id: "composer", cornerRadius: 24)
+
+// Route default
+.zoom(sourceID: "prompt", destinationID: "composer")
+```
+
+The incoming screen starts clipped to the destination view, laid exactly over
+the source, and the clip opens to the full screen while that view travels to its
+place. The pop runs it backwards and lands the destination view on the source.
+The source is hidden while the transition runs, so it never shows twice. It
+always runs on KVRouterKit's own animator (SwiftUI's zoom cannot align to a view
+of the destination), so the back swipe is interactive on every iOS version.
+
 ### Custom Transitions
 
 Custom transitions describe only compositor-safe endpoint values. KVRouterKit
@@ -327,6 +352,7 @@ programmatic pop.
 |---|---|---|
 | `.system` | Native system navigation | Native system navigation |
 | `.zoom` | Custom live-view hero | Native SwiftUI zoom |
+| `.zoom(sourceID:destinationID:)` | KVRouterKit custom engine | KVRouterKit custom engine |
 | Other built-ins | KVRouterKit custom engine | KVRouterKit custom engine |
 | `.custom` | KVRouterKit custom engine | KVRouterKit custom engine |
 
@@ -595,7 +621,7 @@ nothing.
 | Push | `push(_:transition:)`, `pushView(tag:transition:_:)` |
 | Path changes | `replaceTop(with:)`, `replaceTop(with:transition:)`, `setPath` |
 | Pop | `pop()`, `pop(count:)`, `popTo(_:)`, `popTo(tag:)`, `popTo(SomeView.self)`, `popToRoot()` |
-| Hero | `.zoom(sourceID:)`, `.kvTransitionSource(id:)` |
+| Hero | `.zoom(sourceID:)`, `.zoom(sourceID:destinationID:)`, `.kvTransitionSource(id:)`, `.kvTransitionDestination(id:)` |
 | Back swipe | `KVRouterHost(interactivePopEnabled:)`, `willPop(from:to:)` |
 | Routes | `KVRoute`, `.kvRoutes { }`, `KVRouting`, `KVViewRouting` |
 | Dependency graph | `KVUnhostedRouter` |

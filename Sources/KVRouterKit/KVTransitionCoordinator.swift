@@ -111,6 +111,8 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
 
     private var bridge: KVNavigationControllerBridge?
     private var nativeZoomEntries: [UUID: KVNativeZoomEntryMetadata] = [:]
+    /// SwiftUI's own dismiss for each screen on native zoom — see `perform`'s pop.
+    private var nativeZoomDismissals: [UUID: DismissAction] = [:]
     private var navigationAnimationIntent: KVNavigationAnimationIntent?
     private var navigationAnimationIntentExpiry: Task<Void, Never>?
 
@@ -171,7 +173,7 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         supportsNativeZoom: Bool
     ) -> KVResolvedTransition {
         let requested = override ?? defaultTransition
-        if case .zoom(let sourceID) = requested.kind,
+        if let sourceID = requested.heroSourceID,
            !hasSource(sourceID.anyHashable) {
             return KVResolvedTransition(
                 transition: .scaleAndFade,
@@ -201,6 +203,15 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             )
         }
 
+        // The screen holding the source is covered until the pop starts, and a covered
+        // source has left the registry — checking here would always fall back. The animator
+        // checks once that screen is back in the window, and falls back itself if it must.
+        if request.operation == .pop,
+           let transition = request.transitionOverride,
+           case .anchoredZoom = transition.kind {
+            return KVResolvedTransition(transition: transition, backend: .custom)
+        }
+
         return resolve(
             override: request.transitionOverride,
             supportsNativeZoom: supportsNativeZoom
@@ -213,6 +224,13 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
 
     func nativeZoomSourceID(for entry: KVNavigationEntry) -> AnyHashable? {
         nativeZoomEntries[entry.id]?.nativeSourceID
+    }
+
+    /// Called by the destination itself, which is the only place SwiftUI hands out the
+    /// `DismissAction` that knows how to play its zoom backwards.
+    func registerNativeZoomDismiss(_ dismiss: DismissAction, for entry: KVNavigationEntry) {
+        guard nativeZoomEntries[entry.id] != nil else { return }
+        nativeZoomDismissals[entry.id] = dismiss
     }
 
     func perform(
@@ -257,8 +275,22 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
                         )
                 }
                 prepareNavigationAnimationIntent(for: request)
+                mutation()
+            } else if let from = request.from,
+                      let dismiss = nativeZoomDismissals[from.id] {
+                // A router pop that only edits the path reaches UIKit as
+                // `animated: false` and SwiftUI does not play the zoom back: the
+                // screen cuts to the one below. It only ever animated when the
+                // two screens disagreed on the navigation bar, and SwiftUI
+                // animated the bar. The destination's own `dismiss` is the pop
+                // SwiftUI animates — the same one a swipe or a back button runs.
+                // The path change it causes lands as a pop the router already
+                // claimed, so middleware does not run twice.
+                dismiss()
+                await waitForRemoval(of: from.id, fallback: mutation)
+            } else {
+                mutation()
             }
-            mutation()
             bridge?.refreshInteractivePopAvailability()
         case .custom:
             let descriptor = resolved.transition.descriptor(
@@ -284,6 +316,22 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
                 scheduleWatchdog(for: transaction)
             }
         }
+    }
+
+    /// Holds the queue until `dismiss` has taken `id` off the path, so the next queued
+    /// operation sees the stack it expects. A dismiss SwiftUI ignored (the screen was never
+    /// shown) falls back to editing the path after a second.
+    private func waitForRemoval(
+        of id: UUID,
+        fallback: @MainActor () -> Void
+    ) async {
+        for _ in 0..<60 {
+            guard router?.navigationEntries.contains(where: { $0.id == id }) == true else {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 16_000_000)
+        }
+        fallback()
     }
 
     func performSilently(_ edit: @MainActor () -> Void) {
@@ -469,6 +517,10 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             heroSourceProvider: heroSourceProvider(
                 for: resolved.transition
             ),
+            heroDestinationProvider: heroDestinationProvider(
+                for: resolved.transition
+            ),
+            setSourceHidden: sourceHider(for: resolved.transition),
             heroFallbackDescriptor: KVNavigationTransition.scaleAndFade
                 .descriptor(
                     operation: operation,
@@ -481,10 +533,30 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
     private func heroSourceProvider(
         for transition: KVNavigationTransition
     ) -> (() -> KVTransitionSourceRegistry.Source?)? {
-        guard case .zoom(let sourceID) = transition.kind else { return nil }
+        guard let sourceID = transition.heroSourceID else { return nil }
         let id = sourceID.anyHashable
         return { [weak sourceRegistry] in
             sourceRegistry?.source(for: id)
+        }
+    }
+
+    private func heroDestinationProvider(
+        for transition: KVNavigationTransition
+    ) -> (() -> KVTransitionSourceRegistry.Source?)? {
+        guard case .anchoredZoom(_, let destinationID) = transition.kind else { return nil }
+        let id = destinationID.anyHashable
+        return { [weak sourceRegistry] in
+            sourceRegistry?.destination(for: id)
+        }
+    }
+
+    private func sourceHider(
+        for transition: KVNavigationTransition
+    ) -> ((Bool) -> Void)? {
+        guard case .anchoredZoom(let sourceID, _) = transition.kind else { return nil }
+        let id = sourceID.anyHashable
+        return { [weak sourceRegistry] hidden in
+            sourceRegistry?.setSourceHidden(hidden, id: id)
         }
     }
 
@@ -512,6 +584,9 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
             !liveEntryIDs.contains($0.key)
         }
         nativeZoomEntries = nativeZoomEntries.filter {
+            liveEntryIDs.contains($0.key)
+        }
+        nativeZoomDismissals = nativeZoomDismissals.filter {
             liveEntryIDs.contains($0.key)
         }
         for metadata in removedEntries.values {
