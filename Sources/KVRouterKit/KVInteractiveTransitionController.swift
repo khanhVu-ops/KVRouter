@@ -121,7 +121,10 @@ final class KVInteractiveTransitionController: NSObject,
         // `canBeginInteractivePop()` already reads false when the host opted
         // out, so the custom pan needs no extra guard — but the system
         // recognizer would then read that as "UIKit's turn" and switch on.
-        let allowsInteractivePop = coordinator?.interactivePopEnabled ?? true
+        // A screen that opted out of interactive dismissal must not fall through to UIKit's edge
+        // pan either: with the custom pan refusing, UIKit's would pick up the swipe and pop it.
+        let allowsInteractivePop = (coordinator?.interactivePopEnabled ?? true)
+            && coordinator?.topScreenBlocksInteractiveDismiss() != true
         let usesCustomInteraction = coordinator?.canBeginInteractivePop() == true
         edgePanGesture.isEnabled = usesCustomInteraction
         // Otherwise enable unconditionally: UIKit gates its own recognizer

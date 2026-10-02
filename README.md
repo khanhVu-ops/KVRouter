@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.7.2"
+        from: "3.8.0"
     )
 ]
 ```
@@ -321,6 +321,17 @@ out early on the push and in on the pop, and the real source is swapped in under
 it rather than jumping into place. A pop animates a still copy of the outgoing
 screen, so a keyboard going down mid-pop does not slide the destination view out
 of the clip.
+
+A screen that should only close from code — a chat whose composer has a row of
+horizontally scrolling chips, say — opts out of being dragged back:
+
+```swift
+.zoom(sourceID: "prompt", destinationID: "composer").interactiveDismissDisabled()
+```
+
+That switches off a native zoom's own dismissal gestures (edge pan, swipe down, pinch) and
+the back swipe of a transition on the router's animator. A `.system` push elsewhere in the
+stack keeps its back swipe.
 
 ### Custom Transitions
 

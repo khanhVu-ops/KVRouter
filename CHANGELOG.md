@@ -2,6 +2,20 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.8.0 - 2026-10-02
+
+### Added
+
+- `KVNavigationTransition.interactiveDismissDisabled(_:)`: a screen pushed with this
+  transition cannot be dragged back — only a `pop()` from code closes it. Built for zooms
+  into screens with horizontally scrolling content, where a stray swipe dismissed the screen
+  and lost what the user was typing. A native zoom (iOS 18+) has its three dismissal gestures
+  switched off (leading-edge pan, swipe down, pinch — SwiftUI's `.navigationTransition(.zoom)`
+  offers no way to); a transition on the router's own animator (anchored zoom, custom) loses
+  its back swipe, and UIKit's edge pan with it, which would otherwise pick up the swipe and pop
+  the screen anyway. Other screens are untouched: a `.system` push keeps its back swipe.
+  Measured on iOS 26.2.
+
 ## 3.7.2 - 2026-10-02
 
 ### Fixed

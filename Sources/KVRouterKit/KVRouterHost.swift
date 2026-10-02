@@ -189,6 +189,11 @@ private struct KVRouterDestinationContent: View {
                 .navigationTransition(
                     .zoom(sourceID: nativeSourceID, in: namespace)
                 )
+                .background {
+                    if !transition.allowsInteractiveDismiss {
+                        KVZoomDismissGestureBlocker()
+                    }
+                }
                 .onAppear {
                     coordinator.registerNativeZoomDismiss(dismiss, for: entry)
                 }
@@ -230,6 +235,55 @@ extension View {
             transform(self)
         } else {
             self
+        }
+    }
+}
+
+/// Switches off the dismissal gestures a native zoom installs on its destination —
+/// ``KVNavigationTransition/interactiveDismissDisabled(_:)``.
+///
+/// SwiftUI's `.navigationTransition(.zoom)` has no way to turn them off, and UIKit's
+/// (`UIZoomTransitionOptions.interactiveDismissShouldBegin`) belongs to a transition SwiftUI
+/// builds itself. UIKit puts three recognizers on the destination's hosting view, named
+/// `com.apple.UIKit.ZoomInteractiveDismiss{LeadingEdgePan,SwipeDown,Pinch}` (iOS 26.2): this
+/// probe walks up from inside the screen and disables those. Names are matched by prefix and a
+/// miss does nothing — a renamed recognizer leaves the zoom interactive, not broken.
+private struct KVZoomDismissGestureBlocker: UIViewRepresentable {
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: Probe, context: Context) {
+        uiView.disableZoomDismissal()
+    }
+
+    final class Probe: UIView {
+        static let namePrefix = "com.apple.UIKit.ZoomInteractiveDismiss"
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            disableZoomDismissal()
+            // UIKit installs the recognizers as the push transition sets up, which can be
+            // after this view reaches the window.
+            DispatchQueue.main.async { [weak self] in self?.disableZoomDismissal() }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            disableZoomDismissal()
+        }
+
+        func disableZoomDismissal() {
+            var view: UIView? = superview
+            while let current = view {
+                for gesture in current.gestureRecognizers ?? []
+                where gesture.isEnabled && (gesture.name?.hasPrefix(Self.namePrefix) ?? false) {
+                    gesture.isEnabled = false
+                }
+                view = current.superview
+            }
         }
     }
 }

@@ -255,6 +255,15 @@ public struct KVNavigationTransition: Sendable {
 
     let kind: Kind
     let animationOverride: KVTransitionAnimation?
+    /// `false` → the screen cannot be dragged back: no interactive pop of any kind for it —
+    /// see ``interactiveDismissDisabled(_:)``.
+    let allowsInteractiveDismiss: Bool
+
+    init(kind: Kind, animationOverride: KVTransitionAnimation?, allowsInteractiveDismiss: Bool = true) {
+        self.kind = kind
+        self.animationOverride = animationOverride
+        self.allowsInteractiveDismiss = allowsInteractiveDismiss
+    }
 
     public static let system = Self(kind: .system, animationOverride: nil)
     public static let fade = Self(kind: .fade, animationOverride: nil)
@@ -350,7 +359,22 @@ public struct KVNavigationTransition: Sendable {
     }
 
     public func animation(_ animation: KVTransitionAnimation) -> Self {
-        Self(kind: kind, animationOverride: animation)
+        Self(kind: kind, animationOverride: animation, allowsInteractiveDismiss: allowsInteractiveDismiss)
+    }
+
+    /// Stops the screen pushed with this transition from being dragged back; only a `pop()` from
+    /// code (a close button) dismisses it.
+    ///
+    /// Meant for zooms. A native zoom (iOS 18+) installs its own dismissal gestures on the
+    /// destination — leading-edge pan, swipe down, pinch — anywhere on the screen, and a screen
+    /// full of horizontally scrolling content (a row of chips over a keyboard) loses its state to
+    /// a stray swipe. Here those three are switched off, and for every transition on the router's
+    /// own animator (anchored zoom, custom) the back swipe is too — including UIKit's edge pan,
+    /// which would otherwise take over and pop the screen with the same animator.
+    ///
+    /// Other screens are untouched: a `.system` push keeps its back swipe.
+    public func interactiveDismissDisabled(_ disabled: Bool = true) -> Self {
+        Self(kind: kind, animationOverride: animationOverride, allowsInteractiveDismiss: !disabled)
     }
 
     var resolvedAnimation: KVTransitionAnimation {
@@ -398,6 +422,7 @@ public struct KVNavigationTransition: Sendable {
     }
 
     var supportsInteractiveBack: Bool {
+        guard allowsInteractiveDismiss else { return false }
         switch kind {
         case .system:
             return false

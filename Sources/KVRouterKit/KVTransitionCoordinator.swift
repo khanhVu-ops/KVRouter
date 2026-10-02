@@ -611,6 +611,11 @@ final class KVTransitionCoordinator: ObservableObject, KVTransitionDriving {
         nativeZoomEntries.count
     }
 
+    /// The top screen opted out of every interactive pop — ``KVNavigationTransition/interactiveDismissDisabled(_:)``.
+    func topScreenBlocksInteractiveDismiss() -> Bool {
+        router?.interactivePopRequest()?.transitionOverride?.allowsInteractiveDismiss == false
+    }
+
     func canBeginInteractivePop() -> Bool {
         guard interactivePopEnabled,
               pendingTransaction == nil,
