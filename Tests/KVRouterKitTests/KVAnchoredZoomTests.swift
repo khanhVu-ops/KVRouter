@@ -100,6 +100,24 @@ final class KVAnchoredZoomTests: XCTestCase {
         XCTAssertEqual(topLeft.y, 500, accuracy: 0.001)
     }
 
+    /// The morph's far end: the part of the screen at rest that stands in for the source — the
+    /// destination's width and top, the source's height scaled back up, in container space.
+    func testClipFrameIsTheDestinationTopAtTheSourceAspect() {
+        let viewFrame = CGRect(x: 0, y: 20, width: 400, height: 780)
+        let geometry = KVAnchoredHeroGeometry(
+            source: KVHeroTransitionGeometry(frame: CGRect(x: 16, y: 500, width: 368, height: 120), cornerRadius: 24),
+            destination: KVHeroTransitionGeometry(frame: CGRect(x: 0, y: 650, width: 400, height: 150), cornerRadius: 24)
+        )
+
+        let clip = geometry.clipFrame(viewFrame: viewFrame)
+        XCTAssertEqual(clip.minX, 0, accuracy: 0.001)
+        XCTAssertEqual(clip.minY, 650, accuracy: 0.001)
+        XCTAssertEqual(clip.width, 400, accuracy: 0.001)
+        XCTAssertEqual(clip.height, 120 * 400 / 368, accuracy: 0.001)
+        // Same aspect as the source, so the picture stretches without distorting.
+        XCTAssertEqual(clip.width / clip.height, 368.0 / 120.0, accuracy: 0.001)
+    }
+
     func testDegenerateDestinationLeavesTheScreenUntouched() {
         let viewFrame = CGRect(x: 0, y: 0, width: 400, height: 800)
         let geometry = KVAnchoredHeroGeometry(

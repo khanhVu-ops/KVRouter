@@ -2,6 +2,27 @@
 
 All notable changes to KVRouterKit are documented in this file.
 
+## 3.7.2 - 2026-10-02
+
+### Fixed
+
+- Anchored zoom (`zoom(sourceID:destinationID:)`) ended every pop, and began every
+  push, with a jump: it only scales, so the destination view landed on the source and
+  the real source replaced it in one frame. That is seamless only when the two look
+  alike at that size, and an input bar opening a composer never does — the buttons
+  moved and the border popped in a quarter-second after the movement had stopped. A
+  picture of the source now travels with the clip and cross-fades with it (out early
+  on a push, in on a pop), riding the same animator so a back swipe scrubs it.
+- An anchored pop measured the destination view once and then clipped the live
+  screen, which kept laying out: a keyboard going down mid-pop (a close button with
+  the keyboard up, or a back swipe) slid the destination view out of the clip, and
+  what landed on the source was whatever had moved into its place. The pop now
+  animates a still copy of the outgoing screen.
+- The anchored clip is installed before the animation block, so a scrubbed back swipe
+  starts from it instead of interpolating an uncommitted mask.
+
+Measured on iOS 26.2.
+
 ## 3.7.1 - 2026-10-02
 
 ### Fixed

@@ -42,7 +42,7 @@ Add KVRouterKit with Swift Package Manager:
 dependencies: [
     .package(
         url: "https://github.com/khanhVu-ops/KVRouter.git",
-        from: "3.7.1"
+        from: "3.7.2"
     )
 ]
 ```
@@ -314,6 +314,13 @@ place. The pop runs it backwards and lands the destination view on the source.
 The source is hidden while the transition runs, so it never shows twice. It
 always runs on KVRouterKit's own animator (SwiftUI's zoom cannot align to a view
 of the destination), so the back swipe is interactive on every iOS version.
+
+The two views rarely look alike at the same size — different padding, a border on
+one — so a picture of the source travels with the clip and cross-fades: it fades
+out early on the push and in on the pop, and the real source is swapped in under
+it rather than jumping into place. A pop animates a still copy of the outgoing
+screen, so a keyboard going down mid-pop does not slide the destination view out
+of the clip.
 
 ### Custom Transitions
 

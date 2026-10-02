@@ -212,6 +212,16 @@ final class KVManagedTransitionView {
         mask.layer.cornerRadius = resolved.maskCornerRadius
     }
 
+    /// Puts the anchored clip in place at identity — full bounds, square corners — *before* the
+    /// animation block, so the block only animates it. Created inside the block, the mask had no
+    /// committed starting state: a scrubbed back swipe interpolated from garbage and cut the
+    /// screen to a huge ellipse that did not scale. Measured on iOS 26.2.
+    func prepareAnchoredMask() {
+        let mask = anchoredMask ?? makeAnchoredMask()
+        mask.frame = view.bounds
+        mask.layer.cornerRadius = 0
+    }
+
     private func makeAnchoredMask() -> UIView {
         let mask = UIView(frame: view.bounds)
         mask.backgroundColor = .black
@@ -424,8 +434,25 @@ final class KVViewControllerTransitionAnimator: NSObject,
         let hidesSource = anchoredGeometry != nil
 
         let size = container.bounds.size
+        // Anchored pop: animate a still copy of the outgoing screen. The geometry above was read
+        // once, and the live screen keeps laying out under the clip — a keyboard going down
+        // mid-pop (✕ with the keyboard up, or a back swipe) slid the destination view out of the
+        // clip, so what landed on the source was whatever had moved into its place.
+        let frozenOutgoing = operation == .pop && anchoredGeometry != nil
+            ? KVAnchoredMorph.freeze(fromView, in: container)
+            : nil
+        // Taken before the source is hidden — see ``KVAnchoredMorph``.
+        let morph = anchoredGeometry.flatMap {
+            KVAnchoredMorph(
+                operation: operation,
+                geometry: $0,
+                sourceScreen: operation == .push ? fromView : toView,
+                zoomedScreen: operation == .push ? toView : fromView,
+                container: container
+            )
+        }
         let incoming = KVManagedTransitionView(toView)
-        let outgoing = KVManagedTransitionView(fromView)
+        let outgoing = KVManagedTransitionView(frozenOutgoing ?? fromView)
 
         // Before any transform: the anchor compensation assumes the layer
         // transform is still identity.
@@ -440,6 +467,10 @@ final class KVViewControllerTransitionAnimator: NSObject,
             incoming.apply(activeDescriptor.incoming.state, containerSize: size)
         }
         if hidesSource { setSourceHidden?(true) }
+        if operation == .pop, anchoredGeometry != nil {
+            outgoing.prepareAnchoredMask()
+        }
+        morph?.prepare()
 
         animator.addAnimations({
             incoming.applyIdentity()
@@ -457,10 +488,21 @@ final class KVViewControllerTransitionAnimator: NSObject,
                 )
             }
         }, delayFactor: activeDescriptor.outgoingDelayFactor)
+        if let morph {
+            animator.addAnimations { morph.animate() }
+            if operation == .pop {
+                animator.addAnimations({ morph.fadeIn() }, delayFactor: KVAnchoredMorph.popFadeDelay)
+            }
+        }
         animator.addCompletion { [onCompletion, setSourceHidden] _ in
             let cancelled = transitionContext.transitionWasCancelled
             incoming.restore()
             outgoing.restore()
+            morph?.remove()
+            if let frozenOutgoing {
+                frozenOutgoing.removeFromSuperview()
+                fromView.isHidden = false
+            }
             if hidesSource { setSourceHidden?(false) }
             transitionContext.completeTransition(!cancelled)
 
@@ -528,4 +570,134 @@ struct KVResolvedAnchoredHeroState {
     /// In the zoomed screen's own coordinates, before the transform.
     let maskFrame: CGRect
     let maskCornerRadius: CGFloat
+}
+
+extension KVAnchoredHeroGeometry {
+    /// Where the clip sits once the zoomed screen is at identity, in the container: the
+    /// destination's width and top edge, the source's height scaled back up. The morph's
+    /// far end — the source image is stretched onto exactly the part of the screen that
+    /// stands in for it.
+    func clipFrame(viewFrame: CGRect) -> CGRect {
+        resolved(viewFrame: viewFrame).maskFrame.offsetBy(dx: viewFrame.minX, dy: viewFrame.minY)
+    }
+}
+
+/// A picture of the source travelling with the clip and cross-fading with it.
+///
+/// The anchored zoom only scales: the zoomed screen's destination view lands on the source and
+/// the real source then replaces it in one frame. That is seamless only when the two views look
+/// alike at that scale, and the case this transition exists for — a home input bar and the
+/// chat composer it opens into — never does: different padding, a border on one. Every push
+/// opened with the bar's contents jumping and every pop ended with them jumping back, the
+/// border popping in a quarter-second after the movement had visibly stopped (the spring's
+/// tail). Measured on iOS 26.2.
+///
+/// The picture rides the same animator as the zoom, so it follows the clip through a back
+/// swipe and reverses with it on cancel. It fades early on a push — the screen that opens is
+/// what matters — and late on a pop, so the real source is what the eye already sees when it
+/// is swapped in.
+@MainActor
+final class KVAnchoredMorph {
+    /// Push: fully faded by this fraction of the transition's progress.
+    static let pushFadeEnd = 0.35
+    /// Pop: the fade-in starts this far into the transition and runs to its end. The spring has
+    /// covered most of the distance early, so the real source is what the eye already sees by
+    /// the time it is swapped in.
+    ///
+    /// A delay factor on the animator rather than a keyframe: a keyframe starting late inside a
+    /// spring-timed `UIViewPropertyAnimator` never ran — the picture stayed invisible and the
+    /// pop ended on the same jump this type exists to remove. Measured on iOS 26.2.
+    static let popFadeDelay: CGFloat = 0.15
+
+    private let operation: KVTransitionOperation
+    private let picture: UIView
+    private let sourceFrame: CGRect
+    private let clipFrame: CGRect
+
+    /// `nil` when there is nothing to picture — the zoom then runs as before.
+    init?(
+        operation: KVTransitionOperation,
+        geometry: KVAnchoredHeroGeometry,
+        sourceScreen: UIView,
+        zoomedScreen: UIView,
+        container: UIView
+    ) {
+        let rect = sourceScreen.convert(geometry.source.frame, from: container)
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        // Drawn now, synchronously, before the animator dims anything or hides the source.
+        //
+        // A pop's source screen has only just been put back in the window. Every capture that
+        // waits for it to draw failed there: `snapshotView(afterScreenUpdates: true)` is lazy
+        // and caught the screen already dimmed with the source hidden (dark, borderless), and
+        // `drawHierarchy(afterScreenUpdates: true)` returned false with nothing drawn. Its
+        // layers still hold what they showed before the push, so rendering the layer tree gets
+        // the source as it was. Measured on iOS 26.2.
+        let image = UIGraphicsImageRenderer(bounds: rect).image { context in
+            switch operation {
+            case .push:
+                sourceScreen.drawHierarchy(in: sourceScreen.bounds, afterScreenUpdates: false)
+            case .pop:
+                sourceScreen.layer.render(in: context.cgContext)
+            }
+        }
+        let picture = UIImageView(image: image)
+        picture.contentMode = .scaleToFill
+        picture.isUserInteractionEnabled = false
+        self.operation = operation
+        self.picture = picture
+        self.sourceFrame = geometry.source.frame
+        self.clipFrame = geometry.clipFrame(viewFrame: zoomedScreen.frame)
+        container.addSubview(picture)
+    }
+
+    func prepare() {
+        switch operation {
+        case .push:
+            picture.frame = sourceFrame
+            picture.alpha = 1
+        case .pop:
+            picture.frame = clipFrame
+            picture.alpha = 0
+        }
+    }
+
+    /// Inside the animator's animation block.
+    func animate() {
+        let operation = operation
+        let picture = picture
+        // The frame rides the animator's own curve, like the zoom it travels with. Inside a
+        // keyframe block it ran on the keyframes' linear clock instead and fell behind the
+        // spring — the picture lagged the clip it should sit on.
+        picture.frame = operation == .push ? clipFrame : sourceFrame
+        guard operation == .push else { return }
+        UIView.animateKeyframes(withDuration: 0, delay: 0, options: [.calculationModeLinear]) {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: Self.pushFadeEnd) {
+                picture.alpha = 0
+            }
+        }
+    }
+
+    /// Pop only, added with ``popFadeDelay``.
+    func fadeIn() {
+        picture.alpha = 1
+    }
+
+    func remove() {
+        picture.removeFromSuperview()
+    }
+
+    /// A still copy of `screen` laid over it, the live screen hidden until the transition ends.
+    ///
+    /// Wrapped in a plain view because the anchored clip is a `mask`, and a snapshot view
+    /// ignores its own mask — the whole screen showed, scaled, over the one underneath.
+    static func freeze(_ screen: UIView, in container: UIView) -> UIView? {
+        guard let still = screen.snapshotView(afterScreenUpdates: false) else { return nil }
+        let wrapper = UIView(frame: screen.frame)
+        wrapper.isUserInteractionEnabled = false
+        still.frame = wrapper.bounds
+        wrapper.addSubview(still)
+        container.insertSubview(wrapper, aboveSubview: screen)
+        screen.isHidden = true
+        return wrapper
+    }
 }
